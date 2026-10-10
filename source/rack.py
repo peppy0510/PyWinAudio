@@ -100,7 +100,8 @@ class MasterUnit:
 
         if self.rack.state == 'linked' and self.rack.power:
             boost = self.rack.get_peak_boost()
-            text = 'PEAK %s' % get_db_text(boost + self.rack.get_preamp())
+            # 계기판의 피크와 헷갈리지 않게, 이것은 EQ 들이 올리는 최대 이득이라고 부른다.
+            text = 'EQ BOOST %s' % get_db_text(boost + self.rack.get_preamp())
             draw_text(gc, text, self.text_right, middle - 15, 8, RACK['dim'], align='right',
                       engraved=True)
         for control in self.get_controls():
@@ -149,6 +150,50 @@ class AddSlot:
             button.draw(gc, FACES['master'][1])
 
 
+class RemovedSlot:
+    '''방금 뺀 장치가 있던 자리. 잠깐 남아 되돌리기를 받는다. 다른 것을 고치면 사라진다.'''
+
+    height = 34
+    LIFETIME = 8000
+
+    def __init__(self, rack, index, unit):
+        self.rack = rack
+        self.index = index
+        self.unit = unit
+        self.rect = wx.Rect()
+        self.undo = Button('Undo', lambda: rack.undo_remove())
+        self.timer = wx.CallLater(self.LIFETIME, rack.forget_removed)
+
+    def get_controls(self):
+        return [self.undo]
+
+    def layout(self, gc, rect):
+        self.rect = rect
+        width = self.undo.get_width(gc)
+        right = rect.x + rect.width - EAR - INSET
+        self.undo.rect = wx.Rect(right - width, rect.y + (rect.height - Button.HEIGHT) // 2,
+                                 width, Button.HEIGHT)
+
+    def draw(self, gc):
+        rect = self.rect
+        inner = wx.Rect(rect.x + EAR + 2, rect.y, rect.width - EAR * 2 - 4, rect.height)
+        gc.SetPen(wx.Pen(wx.Colour(RACK['rail_edge']), 1, wx.PENSTYLE_SHORT_DASH))
+        gc.SetBrush(wx.TRANSPARENT_BRUSH)
+        gc.DrawRoundedRectangle(inner.x + 0.5, inner.y + 0.5, inner.width - 1,
+                                inner.height - 1, 4)
+        title = self.unit.get_title().upper()
+        set_font(gc, 8.5, RACK['dim'], bold=True)
+        limit = max(0, self.undo.rect.x - rect.x - EAR - INSET - 12)
+        text = fit_text(gc, '%s removed' % title, limit)
+        draw_text(gc, text, rect.x + EAR + INSET, rect.y + (rect.height - 14) / 2, 8.5,
+                  RACK['dim'], bold=True)
+        self.undo.draw(gc, FACES['master'][1])
+
+    def cancel(self):
+        if self.timer.IsRunning():
+            self.timer.Stop()
+
+
 class RackView(Canvas):
 
     def __init__(self, parent, theme, chain, power, on_change):
@@ -166,6 +211,7 @@ class RackView(Canvas):
         self.thumb = None
         self.thumb_drag = None
         self.boost = None
+        self.removed = None
 
         self.Bind(wx.EVT_LEFT_DOWN, self.on_down)
         self.Bind(wx.EVT_LEFT_DCLICK, self.on_dclick)
@@ -203,6 +249,9 @@ class RackView(Canvas):
         return ''
 
     def on_unit_change(self, unit=None):
+        # 되돌리기는 바로 다음 한 번까지만. 그 뒤에 고친 것과 섞이면 자리가 어긋난다.
+        if unit is not None and self.removed is not None:
+            self.forget_removed(refresh=False)
         self.boost = None
         self.Refresh()
         self.on_change()
@@ -243,6 +292,7 @@ class RackView(Canvas):
         self.refresh_state()
 
     def add(self, kind):
+        self.forget_removed(refresh=False)
         unit = build_unit(make_unit(kind), self)
         self.units.append(unit)
         # 고르다 그만두면 빈 칸을 남기지 않는다. 골랐는데 못 올렸으면 남겨 두어 까닭을 보인다.
@@ -254,17 +304,40 @@ class RackView(Canvas):
         wx.CallAfter(self.reveal, unit)
 
     def remove(self, unit):
-        if unit in self.units:
-            if hasattr(unit, 'close'):
-                unit.close()
-            self.units.remove(unit)
+        if unit not in self.units:
+            return
+        if hasattr(unit, 'close'):
+            unit.close()
+        index = self.units.index(unit)
+        self.units.remove(unit)
+        self.reset_pointer()
+        self.forget_removed(refresh=False)
+        self.removed = RemovedSlot(self, index, unit)
+        self.on_unit_change()
+
+    def undo_remove(self):
+        removed = self.removed
+        if removed is None:
+            return
+        self.forget_removed(refresh=False)
+        unit = build_unit(removed.unit.data, self)
+        self.units.insert(min(removed.index, len(self.units)), unit)
+        self.reset_pointer()
+        self.on_unit_change()
+
+    def forget_removed(self, refresh=True):
+        if self.removed is not None:
+            self.removed.cancel()
+            self.removed = None
             self.reset_pointer()
-            self.on_unit_change()
+            if refresh:
+                self.Refresh()
 
     def move(self, unit, delta):
         index = self.units.index(unit)
         target = index + delta
         if 0 <= target < len(self.units):
+            self.forget_removed(refresh=False)
             self.units[index], self.units[target] = self.units[target], self.units[index]
             self.on_unit_change()
 
@@ -276,7 +349,10 @@ class RackView(Canvas):
     # ------------------------------------------------------------ 자리
 
     def get_blocks(self):
-        return [self.master] + self.units + [self.slot]
+        units = list(self.units)
+        if self.removed is not None:
+            units.insert(min(self.removed.index, len(units)), self.removed)
+        return [self.master] + units + [self.slot]
 
     def get_controls(self):
         for block in self.get_blocks():

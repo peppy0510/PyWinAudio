@@ -12,6 +12,7 @@ import wx
 
 import eapo
 
+from meterview import MeterView
 from rack import RackView
 from settingsbox import SettingsBox
 from sidemenu import SideMenu
@@ -69,11 +70,18 @@ class MainFrame(wx.Frame):
         self.set_icon()
 
         self.book = wx.Simplebook(self)
-        self.rack = RackView(self.book, theme, settings.get('chain', []),
+        # 계기판은 랙 위에 고정해 두고 랙만 굴린다. 따로 다시 그려져 랙을 건드리지 않는다.
+        self.rackpage = wx.Panel(self.book)
+        self.meters = MeterView(self.rackpage, settings.get('meters', True), self.store_settings)
+        self.rack = RackView(self.rackpage, theme, settings.get('chain', []),
                              settings.get('power', True), self.on_rack_change)
+        column = wx.BoxSizer(wx.VERTICAL)
+        column.Add(self.meters, 0, wx.EXPAND)
+        column.Add(self.rack, 1, wx.EXPAND)
+        self.rackpage.SetSizer(column)
         self.settingsbox = SettingsBox(self.book, theme, settings, self.on_settings,
                                        self.on_unlink)
-        for page in (self.rack, self.settingsbox):
+        for page in (self.rackpage, self.settingsbox):
             self.book.AddPage(page, '')
 
         self.titlebar = TitleBar(self, theme, self.on_menu, self.toggle_maximize)
@@ -251,6 +259,7 @@ class MainFrame(wx.Frame):
             'rect': self.stored_rect,
             'power': self.rack.power,
             'chain': self.rack.get_chain(),
+            'meters': self.meters.enabled,
         }
         save_settings(settings)
 
@@ -265,6 +274,7 @@ class MainFrame(wx.Frame):
         self.write_rack()
         if self.writer is not None:
             self.writer.Stop()
+        self.meters.close()
         self.rack.close()
         # 마우스를 잡은 채로 창이 사라지면 나중에 죽는다. 먼저 놓게 한다.
         self.sidemenu.close()

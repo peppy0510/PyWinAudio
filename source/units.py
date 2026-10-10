@@ -107,8 +107,8 @@ class Unit:
         self.power = Power(lambda: self.data.get('on', True), self.set_on)
         self.up = IconButton('up', lambda: rack.move(self, -1), tip='Move up')
         self.down = IconButton('down', lambda: rack.move(self, 1), tip='Move down')
-        self.remove = IconButton('close', lambda: rack.remove(self), confirm='Remove?',
-                                 tip='Remove')
+        # 묻지 않고 곧장 뺀다. 빠진 자리에 되돌리기 띠가 남는다.
+        self.remove = IconButton('close', lambda: rack.remove(self), tip='Remove')
         self.extras = []
         self.build()
 
