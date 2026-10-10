@@ -5,57 +5,36 @@
 author: Taehong Kim
 email: peppy0510@hotmail.com
 
-Draws assets/icon/icon.ico — two rack units, a knob on the top one and a lit
-lamp beside it. A rack alone reads as a server; the knob says it is sound.
+Draws assets/icon/icon.ico — three faders set at different heights. The other
+PyWin icons are one plain shape in two greys on the dark disc; this keeps to that.
 '''
 
 
-import math
 import os
 import wx
 
 
 SIZE = 128
-DISC = '#1b1d21'
-PANEL = '#3a3f46'
-EDGE = '#5a5f67'
-KNOB = '#e6e9ed'
-LAMP = '#4c9aff'
-ARC = '#ffb04d'
+DISC = '#2f333a'
+TRACK = '#8b929b'
+CAP = '#e6e9ed'
+
+# 가로 자리와 손잡이 높이(위에서부터의 비율). 가운데가 내려가 EQ 곡선으로 읽힌다.
+FADERS = ((0.27, 0.36), (0.50, 0.62), (0.73, 0.30))
 
 
 def draw_icon(gc, size):
-    left, width = size * 0.12, size * 0.76
-    for index, (top, height) in enumerate(((0.16, 0.40), (0.62, 0.22))):
-        gc.SetPen(wx.TRANSPARENT_PEN)
-        gc.SetBrush(wx.Brush(wx.Colour(PANEL)))
-        gc.DrawRoundedRectangle(left, size * top, width, size * height, size * 0.05)
-        gc.SetBrush(wx.Brush(wx.Colour(EDGE)))
-        gc.DrawRectangle(left + size * 0.04, size * top, width - size * 0.08, size * 0.02)
-
-    cx, cy, radius = size * 0.64, size * 0.36, size * 0.13
-    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(ARC)).Width(size * 0.045)
-                           .Cap(wx.CAP_ROUND)))
-    gc.SetBrush(wx.TRANSPARENT_BRUSH)
-    path = gc.CreatePath()
-    path.AddArc(cx, cy, radius + size * 0.05, math.radians(135), math.radians(345), True)
-    gc.StrokePath(path)
+    top, bottom = size * 0.20, size * 0.80
+    track = size * 0.055
+    width, height = size * 0.20, size * 0.11
     gc.SetPen(wx.TRANSPARENT_PEN)
-    gc.SetBrush(wx.Brush(wx.Colour(KNOB)))
-    gc.DrawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
-    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(DISC)).Width(size * 0.035)
-                           .Cap(wx.CAP_ROUND)))
-    angle = math.radians(345)
-    gc.StrokeLine(cx, cy, cx + math.cos(angle) * radius * 0.8, cy + math.sin(angle) * radius * 0.8)
-
-    gc.SetPen(wx.TRANSPARENT_PEN)
-    gc.SetBrush(wx.Brush(wx.Colour(LAMP)))
-    lamp = size * 0.055
-    gc.DrawEllipse(size * 0.26 - lamp, cy - lamp, lamp * 2, lamp * 2)
-    for index in range(3):
-        x = size * 0.24 + index * size * 0.18
-        gc.SetBrush(wx.Brush(wx.Colour(EDGE)))
-        gc.DrawRoundedRectangle(x, size * 0.71, size * 0.12, size * 0.04, size * 0.02)
+    for x, ratio in FADERS:
+        cx = size * x
+        gc.SetBrush(wx.Brush(wx.Colour(TRACK)))
+        gc.DrawRoundedRectangle(cx - track / 2, top, track, bottom - top, track / 2)
+        cy = size * ratio
+        gc.SetBrush(wx.Brush(wx.Colour(CAP)))
+        gc.DrawRoundedRectangle(cx - width / 2, cy - height / 2, width, height, height * 0.3)
 
 
 def main():

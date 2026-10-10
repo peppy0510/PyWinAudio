@@ -16,6 +16,7 @@ pywinaudio.txt 에 쓴다. 이어 붙이기 전의 config.txt 는 옆에 그대�
 import os
 import re
 import shlex
+import time
 import winreg
 
 
@@ -75,12 +76,25 @@ def read_text(path):
     return text.replace('\r\n', '\n')
 
 
+# 엔진이 파일을 읽는 동안에는 바꿔 끼우기가 Access denied 로 거부된다(읽기 한 번에
+# 1~3 ms). 그 틈만 비키면 되므로 짧게 몇 번 다시 해 본다.
+REPLACE_TRIES = 8
+REPLACE_WAIT = 0.015
+
+
 def write_text(path, text):
     '''다 쓴 뒤에 바꿔 끼운다. 엔진이 반쯤 쓴 파일을 읽어 가는 일을 막는다.'''
     temporary = path + '.tmp'
     with open(temporary, 'w', encoding='utf-8', newline='\r\n') as file:
         file.write(text)
-    os.replace(temporary, path)
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_WAIT)
 
 
 def is_include(line):
@@ -116,6 +130,9 @@ def link(folder):
     if lines and not os.path.exists(backup):
         write_text(backup, '\n'.join(lines) + '\n')
     units = parse('\n'.join(lines))
+    # 랙 파일을 먼저 둔다. config.txt 가 먼저 바뀌면 엔진이 아직 없는 파일을 찾다가
+    # 그 사이 소리가 아무것도 안 걸린 채로 지나간다(실측: 'cannot find the file').
+    write_rack(folder, units)
     write_text(path, '\n'.join([
         '# PyWinAudio writes the rack into %s.' % OWN_FILE,
         '# The lines that were here before are kept in %s.' % BACKUP_FILE,

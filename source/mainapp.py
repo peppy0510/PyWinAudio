@@ -31,6 +31,7 @@ HOVER_INTERVAL = 120
 SAVE_DELAY = 600
 # 랙을 고친 뒤 엔진에 넘기기까지. 손잡이를 돌리는 동안 파일을 너무 자주 바꾸지 않게.
 WRITE_DELAY = 120
+RETRY_DELAY = 250
 DEFAULT_SIZE = (860, 900)
 MIN_SIZE = (400, 480)
 
@@ -171,12 +172,16 @@ class MainFrame(wx.Frame):
         self.store_settings()
 
     def write_rack(self):
+        '''못 쓰면 버리지 않고 잠시 뒤 다시 쓴다. 마지막 변경이 엔진에 못 가면 다음 변경
+        때까지 소리가 화면과 어긋난 채로 남는다.'''
         if self.rack.state != 'linked':
             return
         try:
             eapo.write_rack(self.rack.folder, self.rack.get_chain(), self.rack.power)
         except OSError:
-            pass
+            if self.writer is not None and self.writer.IsRunning():
+                return
+            self.writer = wx.CallLater(RETRY_DELAY, self.write_rack)
 
     def on_unlink(self):
         self.rack.on_unlink()
@@ -255,7 +260,11 @@ class MainFrame(wx.Frame):
             self.saver.Stop()
         if self.writer is not None and self.writer.IsRunning():
             self.writer.Stop()
-            self.write_rack()
+        # 닫을 때는 다시 해 볼 틈이 없다. 마지막 상태를 늘 한 번 더 쓴다.
+        self.writer = None
+        self.write_rack()
+        if self.writer is not None:
+            self.writer.Stop()
         self.rack.close()
         # 마우스를 잡은 채로 창이 사라지면 나중에 죽는다. 먼저 놓게 한다.
         self.sidemenu.close()
