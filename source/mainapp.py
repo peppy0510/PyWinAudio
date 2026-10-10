@@ -32,7 +32,7 @@ SAVE_DELAY = 600
 # 랙을 고친 뒤 엔진에 넘기기까지. 손잡이를 돌리는 동안 파일을 너무 자주 바꾸지 않게.
 WRITE_DELAY = 120
 DEFAULT_SIZE = (860, 900)
-MIN_SIZE = (640, 480)
+MIN_SIZE = (400, 480)
 
 # 캡션을 떼고 그 자리를 직접 그린다. 크기 조절과 스냅은 그대로 남는다.
 FRAME_STYLE = wx.DEFAULT_FRAME_STYLE & ~wx.CAPTION

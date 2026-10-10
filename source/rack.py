@@ -132,7 +132,9 @@ class AddSlot:
                 x, y = left, y + Button.HEIGHT + 6
             button.rect = wx.Rect(x, y, width, Button.HEIGHT)
             x += width + 6
+        # 단추가 몇 줄로 접히는지는 폭이 정한다. 접힌 만큼 칸이 자란다.
         self.height = max(U + 30, y + Button.HEIGHT + 12 - rect.y)
+        self.rect = wx.Rect(rect.x, rect.y, rect.width, self.height)
 
     def draw(self, gc):
         rect = self.rect
@@ -283,9 +285,11 @@ class RackView(Canvas):
 
     def layout(self, gc, width):
         y = MARGIN
+        inner = width - MARGIN * 2
         for block in self.get_blocks():
-            block.layout(gc, wx.Rect(MARGIN, y, width - MARGIN * 2, block.height))
-            y += block.height + GAP
+            height = block.get_height(inner) if hasattr(block, 'get_height') else block.height
+            block.layout(gc, wx.Rect(MARGIN, y, inner, height))
+            y += block.rect.height + GAP
         self.total = y + MARGIN
         for control in self.get_controls():
             if isinstance(control, Button):

@@ -372,6 +372,7 @@ class Fader(Control):
 
     cursor = wx.CURSOR_SIZENS
     THUMB = (14, 8)
+    show_label = True
 
     def __init__(self, label, get, put, low, high, default, text):
         super().__init__()
@@ -435,8 +436,9 @@ class Fader(Control):
 
         if self.hovered or self.pressed:
             draw_text(gc, self.text(self.get()), cx, rect.y, 7, RACK['text'], align='center')
-        draw_text(gc, self.label, cx, bottom + 4, 7, RACK['dim'], align='center',
-                  engraved=True)
+        if self.show_label:
+            draw_text(gc, self.label, cx, bottom + 4, 7, RACK['dim'], align='center',
+                      engraved=True)
 
 
 class Button(Control):

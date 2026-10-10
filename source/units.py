@@ -45,6 +45,9 @@ from rackui import set_font
 EAR = 24
 U = 40
 NAME_WIDTH = 170
+# 장치 폭이 이보다 좁으면 이름판을 왼쪽이 아니라 위쪽 띠로 올리고 조작부를 그 아래에 둔다.
+NARROW = 560
+STACK_GAIN = 34
 INSET = 12
 
 TITLES = {
@@ -94,6 +97,7 @@ class Unit:
 
     height = 2 * U
     tall = False
+    stacked = False
 
     def __init__(self, data, rack):
         self.data = data
@@ -134,10 +138,17 @@ class Unit:
         '''큰 장치의 위쪽 띠 오른쪽에 놓는 글자 단추.'''
         return []
 
+    def get_height(self, width):
+        '''좁으면 키가 작은 장치도 위쪽 띠를 얹는다. 그만큼 키가 자란다.'''
+        if not self.tall and width < NARROW:
+            return self.height + STACK_GAIN
+        return self.height
+
     def layout(self, gc, rect):
         self.rect = rect
+        self.stacked = self.tall or rect.width < NARROW
         left, right = rect.x + EAR + INSET, rect.x + rect.width - EAR - INSET + 2
-        if self.tall:
+        if self.stacked:
             top = rect.y + 9
             self.power.rect = wx.Rect(left, top + 2, 14, 14)
             x = right
@@ -174,7 +185,7 @@ class Unit:
         draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR)
         left = self.power.rect.x + 22
         limit = max(0, self.header_right - left)
-        if self.tall:
+        if self.stacked:
             top = rect.y + 8
             set_font(gc, 10.5, RACK['text'], bold=True)
             title = fit_text(gc, self.get_title().upper(), limit)
@@ -244,7 +255,8 @@ class PreampUnit(Unit):
     def layout_body(self, gc, body):
         x = place_knobs([self.gain], body)
         width = self.match.get_width(gc)
-        self.match.rect = wx.Rect(x + 150, body.y + (body.height - Button.HEIGHT) // 2,
+        left = min(x + 150, body.x + body.width - width)
+        self.match.rect = wx.Rect(left, body.y + (body.height - Button.HEIGHT) // 2,
                                   width, Button.HEIGHT)
         self.readout = (x + 6, body.y + body.height / 2)
 
@@ -417,6 +429,10 @@ class ParametricUnit(Unit):
     height = 5 * U + 8
     tall = True
     PANEL = 236
+    # 이보다 좁으면 화면을 위에, 밴드 조작부를 그 아래에 둔다.
+    SIDE_BY_SIDE = 600
+    SCREEN_HEIGHT = 136
+    PANEL_HEIGHT = 134
 
     def build(self):
         self.screen = EqScreen(self)
@@ -500,12 +516,23 @@ class ParametricUnit(Unit):
         self.data['selected'] = max(0, min(self.data.get('selected', 0), len(bands) - 1))
         self.changed()
 
+    def get_height(self, width):
+        if width < self.SIDE_BY_SIDE:
+            return 38 + self.SCREEN_HEIGHT + 10 + self.PANEL_HEIGHT + 12
+        return self.height
+
     def layout_body(self, gc, body):
-        panel = min(self.PANEL, body.width // 2)
-        self.screen.rect = wx.Rect(body.x, body.y + 2, body.width - panel - 16,
-                                   body.height - 4)
-        x = body.x + body.width - panel
-        top = body.y + 2
+        if self.rect.width < self.SIDE_BY_SIDE:
+            panel = min(self.PANEL + 40, body.width)
+            self.screen.rect = wx.Rect(body.x, body.y + 2, body.width, self.SCREEN_HEIGHT)
+            x = body.x
+            top = body.y + self.SCREEN_HEIGHT + 12
+        else:
+            panel = min(self.PANEL, body.width // 2)
+            self.screen.rect = wx.Rect(body.x, body.y + 2, body.width - panel - 16,
+                                       body.height - 4)
+            x = body.x + body.width - panel
+            top = body.y + 2
         self.band_power.rect = wx.Rect(x, top + 4, 14, 14)
         self.previous.rect = wx.Rect(x + 22, top + 2, IconButton.SIZE, IconButton.SIZE)
         self.band_label = (x + 22 + IconButton.SIZE + 34, top + 4)
@@ -518,7 +545,7 @@ class ParametricUnit(Unit):
         self.add.rect = wx.Rect(right - width - 4 - add, top, add, Button.HEIGHT)
 
         lower = top + Button.HEIGHT + 10
-        self.kind.rect = wx.Rect(x, lower, 76, min(5 * 21, body.y + body.height - lower))
+        self.kind.rect = wx.Rect(x, lower, 76, 5 * 21)
         knobs = wx.Rect(x + 84, lower + 14, panel - 84, 64)
         place_knobs([self.freq, self.gain, self.q], knobs, width=(panel - 84 - 8) // 3)
 
@@ -594,9 +621,12 @@ class GraphicUnit(Unit):
         self.scale = wx.Rect(body.x, body.y, 26, body.height)
         area = wx.Rect(body.x + 30, body.y, body.width - 30, body.height)
         width = area.width / len(self.faders)
+        # 칸이 좁으면 주파수 이름을 건너뛰며 단다. 서로 겹쳐 아무것도 못 읽게 되느니.
+        skip = max(1, math.ceil(26 / max(1, width)))
         for index, fader in enumerate(self.faders):
             fader.rect = wx.Rect(round(area.x + width * index), area.y, round(width),
                                  area.height)
+            fader.show_label = index % skip == 0
 
     def draw_body(self, gc):
         if not self.faders:
@@ -655,7 +685,8 @@ class DelayUnit(Unit):
 
     def layout_body(self, gc, body):
         x = place_knobs([self.time], body)
-        self.channel.rect = wx.Rect(x + 12, body.y + (body.height - 24) // 2, 168, 24)
+        width = max(90, min(168, body.x + body.width - x - 12))
+        self.channel.rect = wx.Rect(x + 12, body.y + (body.height - 24) // 2, width, 24)
 
 
 def get_balance_text(value):
