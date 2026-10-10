@@ -17,6 +17,7 @@ email: peppy0510@hotmail.com
 
 
 import ctypes
+import math
 import threading
 import time
 import warnings
@@ -34,6 +35,39 @@ RMS_WINDOW = 0.3
 DEVICE_CHECK = 2.0
 RETRY_DELAY = 1.0
 CLIP_LEVEL = 0.999
+
+# ITU-R BS.1770 라우드니스. K-가중(고역 선반 + RLB 고역 통과) 두 biquad 의 48 kHz 계수.
+# 100 ms 마다 그 구간의 K-가중 에너지를 FFT 칸 무게로 낸다(파스발) — 파이썬에서 표본마다
+# 되먹임 필터를 돌리지 않으려고.
+K_STAGES = (
+    ((1.53512485958697, -2.69169618940638, 1.19839281085285),
+     (1.0, -1.69065929318241, 0.73248077421585)),
+    ((1.0, -2.0, 1.0), (1.0, -1.99004745483398, 0.99007225036621)),
+)
+LOUDNESS_BLOCK = RATE // 10
+MOMENTARY_BLOCKS = 4
+SHORT_BLOCKS = 30
+ABSOLUTE_GATE = -70.0
+RELATIVE_GATE = -10.0
+LOUDNESS_FLOOR = -70.0
+# 누적(I) 값은 한 시간 치까지만 쥔다. 그 위로는 오래된 것부터 버린다.
+INTEGRATED_LIMIT = 36000
+
+
+def get_k_weights(size):
+    freqs = numpy.fft.rfftfreq(size, 1.0 / RATE)
+    z = numpy.exp(-2j * numpy.pi * freqs / RATE)
+    response = numpy.ones(len(freqs), dtype='complex128')
+    for (b0, b1, b2), (a0, a1, a2) in K_STAGES:
+        response *= (b0 + b1 * z + b2 * z * z) / (a0 + a1 * z + a2 * z * z)
+    return numpy.abs(response) ** 2
+
+
+K_WEIGHTS = get_k_weights(LOUDNESS_BLOCK)
+
+
+def to_lufs(power):
+    return max(LOUDNESS_FLOOR, -0.691 + 10 * math.log10(max(power, 1e-12)))
 COINIT_MULTITHREADED = 0
 
 
@@ -52,6 +86,9 @@ class Capture:
         self.running = False
         self.thread = None
         self.serial = 0
+        self.pending = numpy.zeros((0, 2), dtype='float32')
+        self.blocks = []
+        self.gated = []
 
     def start(self):
         if self.running:
@@ -69,6 +106,8 @@ class Capture:
             self.history[:] = 0
             self.squares[:] = 0
             self.peaks = [0.0, 0.0]
+            self.blocks = []
+            self.pending = numpy.zeros((0, 2), dtype='float32')
 
     def run(self):
         '''soundcard 는 가져온 스레드에서만 COM 을 연다. 껐다 켜면 새 스레드가 뜨므로
@@ -141,6 +180,47 @@ class Capture:
                 if peaks[channel] >= CLIP_LEVEL:
                     self.clips[channel] = True
             self.serial += 1
+        self.feed_loudness(block)
+
+    def feed_loudness(self, block):
+        '''100 ms 구간마다 L+R 의 K-가중 평균 제곱을 하나 쌓는다. 400 ms 창(M)이 넘어갈
+        때마다 그 값을 누적용으로도 남긴다 — 75 % 겹친 400 ms 창, 규격 그대로.'''
+        self.pending = numpy.concatenate((self.pending, block))
+        while len(self.pending) >= LOUDNESS_BLOCK:
+            part, self.pending = self.pending[:LOUDNESS_BLOCK], self.pending[LOUDNESS_BLOCK:]
+            spectrum = numpy.abs(numpy.fft.rfft(part.astype('float64'), axis=0)) ** 2
+            # 한쪽 스펙트럼이라 DC·나이퀴스트를 뺀 칸은 두 번 센다.
+            spectrum[1:-1] *= 2
+            power = float((spectrum * K_WEIGHTS[:, None]).sum()) / LOUDNESS_BLOCK ** 2
+            with self.lock:
+                self.blocks.append(power)
+                del self.blocks[:-SHORT_BLOCKS]
+                if len(self.blocks) >= MOMENTARY_BLOCKS:
+                    momentary = sum(self.blocks[-MOMENTARY_BLOCKS:]) / MOMENTARY_BLOCKS
+                    if to_lufs(momentary) > ABSOLUTE_GATE:
+                        self.gated.append(momentary)
+                        del self.gated[:-INTEGRATED_LIMIT]
+
+    def take_loudness(self):
+        '''(M, S, I) LUFS. I 는 절대 게이트 -70 을 넘은 창들의 평균에서 다시 -10 LU 아래를
+        걸러 낸 평균(BS.1770-4).'''
+        with self.lock:
+            blocks = list(self.blocks)
+            gated = numpy.array(self.gated) if self.gated else None
+        momentary = (sum(blocks[-MOMENTARY_BLOCKS:]) / MOMENTARY_BLOCKS
+                     if len(blocks) >= MOMENTARY_BLOCKS else 0.0)
+        short = sum(blocks) / len(blocks) if len(blocks) >= SHORT_BLOCKS else 0.0
+        integrated = LOUDNESS_FLOOR
+        if gated is not None and len(gated):
+            threshold = to_lufs(float(gated.mean())) + RELATIVE_GATE
+            kept = gated[-0.691 + 10 * numpy.log10(numpy.maximum(gated, 1e-12)) > threshold]
+            if len(kept):
+                integrated = to_lufs(float(kept.mean()))
+        return to_lufs(momentary), to_lufs(short), integrated
+
+    def reset_integrated(self):
+        with self.lock:
+            self.gated = []
 
     def take(self, samples):
         '''(지난번 이후의 피크, RMS, 클립, 최근 표본 samples 개). 피크는 꺼내면 비운다.'''

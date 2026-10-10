@@ -21,6 +21,7 @@ import dsp
 import eapo
 
 from rackui import FACES
+from rackui import HEADER_BAND
 from rackui import RACK
 from rackui import Button
 from rackui import Control
@@ -29,9 +30,11 @@ from rackui import IconButton
 from rackui import Knob
 from rackui import Power
 from rackui import Segment
+from rackui import Switch
 from rackui import draw_faceplate
 from rackui import draw_lcd
 from rackui import draw_text
+from rackui import draw_title
 from rackui import fill_rect
 from rackui import fit_text
 from rackui import get_font
@@ -42,13 +45,25 @@ from rackui import get_short_hz
 from rackui import set_font
 
 
-EAR = 24
+# 판 안쪽 여백은 PAD 하나다. 보이는 내용(글씨·화면 테두리·손잡이 호)이 판 가장자리와
+# 이름 띠 아래 금에서 위·아래·왼쪽·오른쪽 모두 이만큼 떨어진다(사용자: 상하좌우 일관).
+# EAR + INSET 이 왼쪽 끝 줄이다. 옛 이름을 그대로 두고 합이 PAD 가 되게 맞춘다.
+PAD = 14
+EAR = 8
+INSET = PAD - EAR
 U = 40
-NAME_WIDTH = 170
-# 장치 폭이 이보다 좁으면 이름판을 왼쪽이 아니라 위쪽 띠로 올리고 조작부를 그 아래에 둔다.
-NARROW = 560
-STACK_GAIN = 34
-INSET = 12
+# 접은 장치의 키. Reason 처럼 이름 띠 한 줄과 켜고 끄기·옮기기만 남는다. 펼친 장치도 맨
+# 위 같은 띠를 쓰고 본체는 BODY_TOP 부터, 아래 BOTTOM 을 남긴다.
+FOLDED = 30
+FOLD = 18
+BODY_TOP = HEADER_BAND + 1 + PAD
+BOTTOM = PAD
+# 믹서와 Analyzer 판은 칸·화면이 촘촘한 판이라 안쪽 여백을 더 작게(사용자).
+TIGHT_PAD = 8
+# 손잡이 한 줄의 보이는 키. 손잡이 칸(64)은 글씨 위아래 여유를 품고 있어 보이는 것은 이만큼.
+KNOB_ROW = 59
+# 손잡이 칸 맨 위에서 이름 글씨가 보이기 시작하는 곳까지.
+KNOB_TOP = 4
 
 TITLES = {
     'preamp': 'Preamp',
@@ -70,6 +85,8 @@ SCREEN_RANGE = 18.0
 GRAPHIC_RANGE = 12.0
 MAX_FADERS = 31
 MAX_BANDS = 20
+# 이 글씨를 보이는 플러그인 파라미터는 손잡이 대신 켜고 끄는 단추로.
+SWITCH_WORDS = ('ON', 'OFF', 'ENABLED', 'DISABLED', 'YES', 'NO')
 
 
 def make_unit(kind):
@@ -95,9 +112,8 @@ def make_unit(kind):
 
 class Unit:
 
-    height = 2 * U
-    tall = False
-    stacked = False
+    # 이름 띠 + 손잡이 한 줄 — 작은 장치의 키.
+    height = BODY_TOP + KNOB_ROW + BOTTOM
 
     def __init__(self, data, rack):
         self.data = data
@@ -107,16 +123,29 @@ class Unit:
         self.power = Power(lambda: self.data.get('on', True), self.set_on)
         self.up = IconButton('up', lambda: rack.move(self, -1), tip='Move up')
         self.down = IconButton('down', lambda: rack.move(self, 1), tip='Move down')
-        # 묻지 않고 곧장 뺀다. 빠진 자리에 되돌리기 띠가 남는다.
         self.remove = IconButton('close', lambda: rack.remove(self), tip='Remove')
+        self.fold = IconButton('down', self.toggle_fold, tip='Fold')
         self.extras = []
         self.build()
 
     def build(self):
         pass
 
+    @property
+    def folded(self):
+        return bool(self.data.get('folded'))
+
+    def toggle_fold(self):
+        '''접는 것은 보기만 바꾼다. 엔진에 가는 글은 그대로라 다시 쓰이지 않는다.'''
+        self.data['folded'] = not self.folded
+        self.rack.on_unit_change(self)
+
     def get_controls(self):
-        return [self.power, self.up, self.down, self.remove] + self.extras
+        header = [self.fold, self.power, self.up, self.down, self.remove]
+        return header if self.folded else header + self.get_body_controls()
+
+    def get_body_controls(self):
+        return self.extras
 
     def set_on(self, value):
         self.data['on'] = bool(value)
@@ -139,41 +168,38 @@ class Unit:
         return []
 
     def get_height(self, width):
-        '''좁으면 키가 작은 장치도 위쪽 띠를 얹는다. 그만큼 키가 자란다.'''
-        if not self.tall and width < NARROW:
-            return self.height + STACK_GAIN
-        return self.height
+        return FOLDED if self.folded else self.height
 
     def layout(self, gc, rect):
+        '''이름 띠는 접었을 때와 펼쳤을 때가 같은 자리다. 접기·불·제목·부제·옮기기 단추가
+        모두 띠 가운데 줄에 선다. 펼치면 그 아래에 본체가 붙을 뿐이다.'''
         self.rect = rect
-        self.stacked = self.tall or rect.width < NARROW
         left, right = rect.x + EAR + INSET, rect.x + rect.width - EAR - INSET + 2
-        if self.stacked:
-            top = rect.y + 9
-            self.power.rect = wx.Rect(left, top + 2, 14, 14)
-            x = right
-            for button in (self.remove, self.down, self.up):
-                x -= IconButton.SIZE
-                button.rect = wx.Rect(x, top, IconButton.SIZE, IconButton.SIZE)
-                x -= 3
+        middle = rect.y + FOLDED // 2
+        self.fold.glyph = 'right' if self.folded else 'down'
+        self.fold.tip = 'Unfold' if self.folded else 'Fold'
+        self.fold.rect = wx.Rect(left - 4, middle - FOLD // 2, FOLD, FOLD)
+        self.power.rect = wx.Rect(left + FOLD, middle - 7, 14, 14)
+        x = right
+        for button in (self.remove, self.down, self.up):
+            x -= IconButton.SIZE
+            button.rect = wx.Rect(x, middle - IconButton.SIZE // 2, IconButton.SIZE,
+                                  IconButton.SIZE)
+            x -= 3
+        if not self.folded:
             x -= 8
             for button in reversed(self.get_header_buttons()):
                 width = button.get_width(gc)
                 x -= width
-                button.rect = wx.Rect(x, top - 2, width, Button.HEIGHT)
+                button.rect = wx.Rect(x, middle - Button.HEIGHT // 2, width, Button.HEIGHT)
                 x -= 6
-            self.header_right = x
-            body = wx.Rect(left, rect.y + 38, right - left, rect.height - 38 - 12)
-        else:
-            middle = rect.y + rect.height / 2
-            self.power.rect = wx.Rect(left, round(middle - 7), 14, 14)
-            x = right - IconButton.SIZE
-            for index, button in enumerate((self.up, self.down, self.remove)):
-                button.rect = wx.Rect(x, rect.y + 8 + index * (IconButton.SIZE + 4),
-                                      IconButton.SIZE, IconButton.SIZE)
-            self.header_right = left + NAME_WIDTH - 8
-            body = wx.Rect(left + NAME_WIDTH, rect.y + 8,
-                           x - 14 - left - NAME_WIDTH, rect.height - 16)
+        self.header_right = x - 8
+        if self.folded:
+            self.body = wx.Rect(left, rect.y, 0, 0)
+            return
+        # 띠의 단추들은 제 안에 여백이 있어 2 화소 더 바깥에 선다. 본체는 PAD 그대로.
+        body = wx.Rect(left, rect.y + BODY_TOP, rect.x + rect.width - PAD - left,
+                       rect.height - BODY_TOP - BOTTOM)
         self.body = body
         self.layout_body(gc, body)
 
@@ -182,33 +208,14 @@ class Unit:
 
     def draw(self, gc):
         rect = self.rect
-        draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR)
+        draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR, self.accent)
         left = self.power.rect.x + 22
-        limit = max(0, self.header_right - left)
-        if self.stacked:
-            top = rect.y + 8
-            set_font(gc, 10.5, RACK['text'], bold=True)
-            title = fit_text(gc, self.get_title().upper(), limit)
-            width = draw_text(gc, title, left, top, 10.5, RACK['text'], bold=True,
-                              engraved=True)[0]
-            set_font(gc, 8, RACK['dim'])
-            subtitle = fit_text(gc, self.get_subtitle(), max(0, limit - width - 12))
-            draw_text(gc, subtitle, left + width + 12, top + 3, 8,
-                      self.get_subtitle_tone(), engraved=True)
-            fill_rect(gc, '#000000', rect.x + EAR + 6, rect.y + 32,
-                      rect.width - EAR * 2 - 12, 1)
-            fill_rect(gc, '#ffffff', rect.x + EAR + 6, rect.y + 33,
-                      rect.width - EAR * 2 - 12, 1)
-        else:
-            middle = rect.y + rect.height / 2
-            set_font(gc, 10.5, RACK['text'], bold=True)
-            title = fit_text(gc, self.get_title().upper(), limit)
-            draw_text(gc, title, left, middle - 17, 10.5, RACK['text'], bold=True,
-                      engraved=True)
-            set_font(gc, 8, RACK['dim'])
-            subtitle = fit_text(gc, self.get_subtitle(), limit)
-            draw_text(gc, subtitle, left, middle + 2, 8, self.get_subtitle_tone(),
-                      engraved=True)
+        draw_title(gc, left, rect.y, self.get_title(), self.get_subtitle(),
+                   self.get_subtitle_tone(), max(0, self.header_right - left))
+        if self.folded:
+            for control in self.get_controls():
+                control.draw(gc, self.accent)
+            return
         gc.Clip(rect.x, rect.y, rect.width, rect.height)
         self.draw_body(gc)
         for control in self.get_controls():
@@ -219,11 +226,14 @@ class Unit:
         pass
 
 
-def place_knobs(knobs, area, width=58):
-    '''손잡이를 왼쪽부터 같은 폭으로 늘어놓고 끝 x 를 돌려준다.'''
+def place_knobs(knobs, area, width=58, gc=None):
+    '''손잡이를 왼쪽부터 같은 폭으로 늘어놓고 끝 x 를 돌려준다. gc 를 주면 첫 손잡이의
+    보이는 왼쪽 끝(호·끝 숫자·이름)이 area 왼쪽에 닿게 칸을 당긴다.'''
     x = area.x
+    if gc is not None and knobs:
+        x -= max(0, int(width / 2 - knobs[0].get_reach(gc, width)))
     for knob in knobs:
-        knob.rect = wx.Rect(x, area.y + (area.height - 64) // 2, width, 64)
+        knob.rect = wx.Rect(x, area.y + (area.height - KNOB_ROW) // 2 - KNOB_TOP, width, 64)
         x += width + 4
     return x
 
@@ -235,7 +245,7 @@ class PreampUnit(Unit):
 
     def build(self):
         self.gain = Knob('GAIN', lambda: self.data['gain'], self.put_gain, -30.0, 12.0, 0.0,
-                         get_db_text, bipolar=False, step=0.1)
+                         get_db_text, bipolar=False, step=0.1, ends=('-30', '+12'))
         self.match = Button('Match', self.on_match)
         self.extras = [self.gain, self.match]
 
@@ -253,7 +263,7 @@ class PreampUnit(Unit):
         self.put_gain(max(-30.0, min(0.0, -math.ceil(self.get_boost() * 10) / 10)))
 
     def layout_body(self, gc, body):
-        x = place_knobs([self.gain], body)
+        x = place_knobs([self.gain], body, gc=gc)
         width = self.match.get_width(gc)
         left = min(x + 150, body.x + body.width - width)
         self.match.rect = wx.Rect(left, body.y + (body.height - Button.HEIGHT) // 2,
@@ -392,7 +402,7 @@ class EqScreen(Control):
             gc.SetPen(get_pen(gc, '#ffffff' if lit else colour, 1.5))
             gc.SetBrush(wx.Brush(wx.Colour(colour if lit else RACK['lcd'])))
             gc.DrawEllipse(x - radius, y - radius, radius * 2, radius * 2)
-            draw_text(gc, str(index + 1), x, y - 6, 7, '#0b141c' if lit else colour,
+            draw_text(gc, str(index + 1), x, y - 6, 7, RACK['lcd'] if lit else colour,
                       bold=True, align='center')
 
     def get_points(self, freqs, curve):
@@ -426,8 +436,7 @@ class EqScreen(Control):
 
 class ParametricUnit(Unit):
 
-    height = 5 * U + 8
-    tall = True
+    height = BODY_TOP + 164 + BOTTOM
     PANEL = 236
     # 이보다 좁으면 화면을 위에, 밴드 조작부를 그 아래에 둔다.
     SIDE_BY_SIDE = 600
@@ -445,13 +454,15 @@ class ParametricUnit(Unit):
                             lambda value: self.put_value('type', value), vertical=True)
         self.freq = Knob('FREQ', lambda: self.get_value('freq', 1000.0),
                          lambda value: self.put_value('freq', round(value, 1)),
-                         20.0, 20000.0, 1000.0, get_hz_text, log=True)
+                         20.0, 20000.0, 1000.0, get_hz_text, log=True, ends=('20', '20k'))
         self.gain = Knob('GAIN', lambda: self.get_value('gain', 0.0),
                          lambda value: self.put_value('gain', round(value, 1)),
-                         -SCREEN_RANGE, SCREEN_RANGE, 0.0, get_db_text, bipolar=True)
+                         -SCREEN_RANGE, SCREEN_RANGE, 0.0, get_db_text, bipolar=True,
+                         ends=('-18', '+18'))
         self.q = Knob('Q', lambda: self.get_value('q', 1.0),
                       lambda value: self.put_value('q', round(value, 2)),
-                      0.1, 10.0, 0.71, lambda value: '%.2f' % value, log=True)
+                      0.1, 10.0, 0.71, lambda value: '%.2f' % value, log=True,
+                      ends=('.1', '10'))
         self.extras = [self.screen, self.previous, self.next, self.add, self.drop,
                        self.band_power, self.kind, self.freq, self.gain, self.q]
 
@@ -517,28 +528,31 @@ class ParametricUnit(Unit):
         self.changed()
 
     def get_height(self, width):
+        if self.folded:
+            return FOLDED
         if width < self.SIDE_BY_SIDE:
-            return 38 + self.SCREEN_HEIGHT + 10 + self.PANEL_HEIGHT + 12
+            return BODY_TOP + self.SCREEN_HEIGHT + 10 + self.PANEL_HEIGHT + BOTTOM
         return self.height
 
     def layout_body(self, gc, body):
         if self.rect.width < self.SIDE_BY_SIDE:
             panel = min(self.PANEL + 40, body.width)
-            self.screen.rect = wx.Rect(body.x, body.y + 2, body.width, self.SCREEN_HEIGHT)
+            self.screen.rect = wx.Rect(body.x + 1, body.y + 1, body.width - 2, self.SCREEN_HEIGHT)
             x = body.x
             top = body.y + self.SCREEN_HEIGHT + 12
         else:
             panel = min(self.PANEL, body.width // 2)
-            self.screen.rect = wx.Rect(body.x, body.y + 2, body.width - panel - 16,
-                                       body.height - 4)
+            # 화면 테두리(1 화소 바깥)가 본체 끝에 닿게.
+            self.screen.rect = wx.Rect(body.x + 1, body.y + 1, body.width - panel - 16,
+                                       body.height - 2)
             x = body.x + body.width - panel
-            top = body.y + 2
+            top = body.y
         self.band_power.rect = wx.Rect(x, top + 4, 14, 14)
         self.previous.rect = wx.Rect(x + 22, top + 2, IconButton.SIZE, IconButton.SIZE)
         self.band_label = (x + 22 + IconButton.SIZE + 34, top + 4)
         self.next.rect = wx.Rect(x + 22 + IconButton.SIZE + 68, top + 2, IconButton.SIZE,
                                  IconButton.SIZE)
-        right = x + panel
+        right = x + panel - 1
         width = self.drop.get_width(gc)
         self.drop.rect = wx.Rect(right - width, top, width, Button.HEIGHT)
         add = self.add.get_width(gc)
@@ -568,8 +582,7 @@ class ParametricUnit(Unit):
 
 class GraphicUnit(Unit):
 
-    height = 4 * U + 8
-    tall = True
+    height = BODY_TOP + 124 + BOTTOM
 
     def build(self):
         self.flat = Button('Flat', self.on_flat)
@@ -618,8 +631,10 @@ class GraphicUnit(Unit):
                                          body.y + (body.height - Button.HEIGHT) // 2,
                                          width, Button.HEIGHT)
             return
+        # 막대 칸 위 14 는 끌 때 값이 뜨는 자리라 평소엔 비어 있다. 그만큼 위로 올려 눈금
+        # 맨 위 글씨가 본체 끝에 닿게, 아래 주파수 글씨도 끝에 닿게 늘인다.
         self.scale = wx.Rect(body.x, body.y, 26, body.height)
-        area = wx.Rect(body.x + 30, body.y, body.width - 30, body.height)
+        area = wx.Rect(body.x + 30, body.y - 11, body.width - 30, body.height + 13)
         width = area.width / len(self.faders)
         # 칸이 좁으면 주파수 이름을 건너뛰며 단다. 서로 겹쳐 아무것도 못 읽게 되느니.
         skip = max(1, math.ceil(26 / max(1, width)))
@@ -652,9 +667,9 @@ class GraphicUnit(Unit):
         top, bottom = fader.get_slot()
         for gain in (-12, -6, 0, 6, 12):
             y = fader.to_y(gain)
-            fill_rect(gc, '#000000' if gain else RACK['faint'], self.scale.x + 18, y,
-                      self.body.width - 18, 1)
-            draw_text(gc, '%+d' % gain if gain else '0', self.scale.x + 14, y - 6, 7,
+            fill_rect(gc, '#000000' if gain else RACK['faint'], self.scale.x + 20, y,
+                      self.body.width - 20, 1)
+            draw_text(gc, '%+d' % gain if gain else '0', self.scale.x + 17, y - 6, 7,
                       RACK['dim'], align='right', engraved=True)
 
 
@@ -665,7 +680,7 @@ class DelayUnit(Unit):
 
     def build(self):
         self.time = Knob('TIME', lambda: self.data['ms'], self.put_time, 0.0, 300.0, 0.0,
-                         lambda value: '%.1f ms' % value, step=0.1)
+                         lambda value: '%.1f ms' % value, step=0.1, ends=('0', '300'))
         self.channel = Segment((('all', 'Both'), ('L', 'Left'), ('R', 'Right')),
                                lambda: self.data.get('channel', 'all'), self.put_channel)
         self.extras = [self.time, self.channel]
@@ -684,7 +699,7 @@ class DelayUnit(Unit):
         self.changed()
 
     def layout_body(self, gc, body):
-        x = place_knobs([self.time], body)
+        x = place_knobs([self.time], body, gc=gc)
         width = max(90, min(168, body.x + body.width - x - 12))
         self.channel.rect = wx.Rect(x + 12, body.y + (body.height - 24) // 2, width, 24)
 
@@ -704,10 +719,10 @@ class StereoUnit(Unit):
     def build(self):
         self.balance = Knob('BALANCE', lambda: self.data['balance'],
                             lambda value: self.put('balance', round(value, 2)),
-                            -1.0, 1.0, 0.0, get_balance_text, bipolar=True)
+                            -1.0, 1.0, 0.0, get_balance_text, bipolar=True, ends=('L', 'R'))
         self.width = Knob('WIDTH', lambda: self.data['width'],
                           lambda value: self.put('width', round(value, 2)),
-                          0.0, 2.0, 1.0, get_width_text, bipolar=True)
+                          0.0, 2.0, 1.0, get_width_text, bipolar=True, ends=('0', '200'))
         self.swap = Button('Swap L/R', lambda: self.put('swap', not self.data.get('swap')),
                            active=lambda: bool(self.data.get('swap')))
         self.extras = [self.balance, self.width, self.swap]
@@ -720,7 +735,7 @@ class StereoUnit(Unit):
         self.changed()
 
     def layout_body(self, gc, body):
-        x = place_knobs([self.balance, self.width], body)
+        x = place_knobs([self.balance, self.width], body, gc=gc)
         width = self.swap.get_width(gc)
         self.swap.rect = wx.Rect(x + 12, body.y + (body.height - Button.HEIGHT) // 2,
                                  width, Button.HEIGHT)
@@ -744,6 +759,13 @@ class VstUnit(Unit):
         self.choose = Button('Choose…', self.on_choose)
         self.knobs = []
         for index, item in enumerate(self.data.get('params', ())):
+            if self.is_switch(index):
+                self.knobs.append(Switch(
+                    self.get_short_name(item[0]),
+                    lambda index=index: self.data['params'][index][1],
+                    lambda value, index=index: self.put_param(index, value),
+                    lambda value, index=index: self.get_display(index, value)))
+                continue
             self.knobs.append(Knob(
                 self.get_short_name(item[0]),
                 lambda index=index: self.data['params'][index][1],
@@ -753,8 +775,15 @@ class VstUnit(Unit):
         self.visible = []
         self.extras = [self.edit, self.choose]
 
-    def get_controls(self):
-        return super().get_controls() + self.visible
+    def get_body_controls(self):
+        return self.extras + self.visible
+
+    def is_switch(self, index):
+        '''VST2 의 파라미터는 모두 0~1 실수라 켜고 끄는 값을 따로 알려 주지 않는다. 플러그인이
+        보여 주는 글씨가 ON·OFF 류면 켜고 끄는 단추로 본다.'''
+        display = self.data.get('display') or []
+        text = display[index].strip().upper() if index < len(display) else ''
+        return text in SWITCH_WORDS
 
     def get_short_name(self, name):
         return name.upper()
@@ -921,7 +950,7 @@ class VstUnit(Unit):
         room = body.width - width - 12
         count = max(0, min(len(self.knobs), room // (self.KNOB + 4)))
         self.visible = self.knobs[:count]
-        place_knobs(self.visible, body, width=self.KNOB)
+        place_knobs(self.visible, body, width=self.KNOB, gc=gc)
         self.hidden = len(self.knobs) - count
         self.more = (body.x + count * (self.KNOB + 4) + 4, body.y + body.height / 2 - 6)
 
@@ -949,7 +978,7 @@ class CustomUnit(Unit):
         font = wx.Font(8, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL,
                        faceName='Consolas')
         gc.SetFont(font, wx.Colour(RACK['dim']))
-        y = body.y + 6
+        y = body.y - 2
         for line in lines[:3]:
             gc.DrawText(fit_text(gc, line, body.width), body.x, y)
             y += 16

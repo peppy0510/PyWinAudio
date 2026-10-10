@@ -13,6 +13,7 @@ import wx
 import eapo
 
 from meterview import MeterView
+from rack import MARGIN
 from rack import RackView
 from settingsbox import SettingsBox
 from sidemenu import SideMenu
@@ -56,6 +57,7 @@ class MainFrame(wx.Frame):
     ready = False
     saver = None
     writer = None
+    written = None
 
     def __init__(self):
         settings = load_settings()
@@ -72,13 +74,21 @@ class MainFrame(wx.Frame):
         self.book = wx.Simplebook(self)
         # 계기판은 랙 위에 고정해 두고 랙만 굴린다. 따로 다시 그려져 랙을 건드리지 않는다.
         self.rackpage = wx.Panel(self.book)
-        self.meters = MeterView(self.rackpage, settings.get('meters', True), self.store_settings)
+        self.meters = MeterView(self.rackpage, self.store_settings,
+                                settings.get('meters_folded', False),
+                                settings.get('meters_pinned', True),
+                                settings.get('meters_parts'))
         self.rack = RackView(self.rackpage, theme, settings.get('chain', []),
-                             settings.get('power', True), self.on_rack_change)
-        column = wx.BoxSizer(wx.VERTICAL)
-        column.Add(self.meters, 0, wx.EXPAND)
-        column.Add(self.rack, 1, wx.EXPAND)
-        self.rackpage.SetSizer(column)
+                             settings.get('power', True), self.on_rack_change,
+                             settings.get('mixer', {}))
+        # 사이저를 쓰지 않고 두 창을 직접 놓는다. 핀을 뺀 Analyzer 판은 랙 위에 겹쳐 떠서
+        # 랙이 굴러가는 만큼 같이 올라간다. 랙은 그 아래를 칠하지 않게 형제를 클립한다.
+        apply_clip_siblings(self.rack)
+        self.meters.Raise()
+        self.meters.on_height = self.place_rackpage
+        self.meters.on_wheel_rack = self.rack.on_wheel
+        self.rack.on_scroll = self.place_meters
+        self.rackpage.Bind(wx.EVT_SIZE, lambda event: (self.place_rackpage(), event.Skip()))
         self.settingsbox = SettingsBox(self.book, theme, settings, self.on_settings,
                                        self.on_unlink)
         for page in (self.rackpage, self.settingsbox):
@@ -114,8 +124,47 @@ class MainFrame(wx.Frame):
         stored = settings.get('page')
         index = PAGE_KEYS.index(stored) if stored in PAGE_KEYS else 0
         self.book.SetSelection(index)
-        # 구분선이 하나 끼어 있어 항목의 차례와 페이지의 차례가 그 뒤로 어긋난다.
-        self.sidemenu.set_selection(index if not index else index + 1)
+        self.sidemenu.set_selection(self.get_menu_index(index))
+
+    def place_rackpage(self):
+        width, height = self.rackpage.GetClientSize()
+        # 계기판은 창이 넓어도 늘 랙 위에 둔다. 오른쪽 기둥(2단)은 사용자가 원치 않는다.
+        meters = self.meters
+        # 핀을 빼면 판이 랙 위에 겹친다. 오른쪽 여백은 비워 랙 스크롤바가 판 뒤에 숨지 않게.
+        meters.right_margin = MARGIN if meters.pinned else 0
+        meters_width = width if meters.pinned else max(1, width - MARGIN)
+        meter_height = meters.get_height(meters_width)
+        meters.SetMinSize(wx.Size(-1, meter_height))
+        if meters.pinned:
+            self.rack.top_space = 0
+            self.rack.SetSize(0, meter_height, width, max(1, height - meter_height))
+            meters.SetSize(0, 0, meters_width, meter_height)
+        else:
+            self.rack.top_space = meter_height
+            self.rack.SetSize(0, 0, width, height)
+            meters.SetSize(0, -self.rack.offset, meters_width, meter_height)
+        self.meters.Raise()
+        self.rack.clamp()
+        self.rack.Refresh()
+
+    def place_meters(self):
+        '''랙이 굴러갈 때마다 핀을 뺀 판을 그만큼 올린다.'''
+        if self.meters.pinned or not self.rack:
+            return
+        y = -self.rack.offset
+        if self.meters.GetPosition().y != y:
+            self.meters.SetPosition(wx.Point(0, y))
+
+    def get_menu_index(self, page):
+        '''구분선이 끼어 있어 항목의 차례와 페이지의 차례가 그 뒤로 어긋난다.'''
+        count = -1
+        for index, item in enumerate(MENU_ITEMS):
+            if item:
+                count += 1
+                if count == page:
+                    return index
+        return 0
+
 
     def get_page_key(self):
         index = self.book.GetSelection()
@@ -167,9 +216,10 @@ class MainFrame(wx.Frame):
 
     def on_select(self, index):
         self.book.SetSelection(index)
-        if index == 1:
+        key = PAGE_KEYS[index]
+        if key == 'settings':
             self.settingsbox.refresh_state()
-        else:
+        elif key == 'rack':
             self.rack.refresh_state()
         self.store_settings()
 
@@ -184,8 +234,14 @@ class MainFrame(wx.Frame):
         때까지 소리가 화면과 어긋난 채로 남는다.'''
         if self.rack.state != 'linked':
             return
+        # 접기처럼 보기만 바뀐 것은 같은 글이 나온다. 엔진이 다시 읽을 까닭이 없으니 쓰지 않는다.
+        text = eapo.render(self.rack.get_chain(), self.rack.power)
+        path = os.path.join(self.rack.folder, eapo.OWN_FILE)
+        if text == self.written and os.path.exists(path):
+            return
         try:
-            eapo.write_rack(self.rack.folder, self.rack.get_chain(), self.rack.power)
+            eapo.write_text(path, text)
+            self.written = text
         except OSError:
             if self.writer is not None and self.writer.IsRunning():
                 return
@@ -220,6 +276,8 @@ class MainFrame(wx.Frame):
     def on_char(self, event):
         if event.GetKeyCode() == wx.WXK_ESCAPE and self.sidemenu.is_open():
             self.sidemenu.close()
+            return
+        if event.GetKeyCode() == wx.WXK_ESCAPE and self.rack.cancel_remove():
             return
         event.Skip()
 
@@ -259,7 +317,10 @@ class MainFrame(wx.Frame):
             'rect': self.stored_rect,
             'power': self.rack.power,
             'chain': self.rack.get_chain(),
-            'meters': self.meters.enabled,
+            'mixer': self.rack.mixer.data,
+            'meters_folded': self.meters.folded,
+            'meters_pinned': self.meters.pinned,
+            'meters_parts': self.meters.parts,
         }
         save_settings(settings)
 

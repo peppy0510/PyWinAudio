@@ -19,46 +19,52 @@ import wx
 from utilities import mix
 
 
+# Native Instruments 식 평평한 숯색 판. 회색은 색을 띠지 않고, 강조는 장치 색 하나뿐이다.
 RACK = {
     'bg': '#111214',
-    'rail': '#24262a',
-    'rail_edge': '#33363b',
-    'hole': '#08090a',
-    'screw': '#8f959d',
-    'screw_dark': '#4a4e54',
-    'text': '#e9ecef',
-    'dim': '#9aa1aa',
-    'faint': '#5f656d',
+    'panel': '#1d1f23',
+    'band': '#17181b',
+    'line': '#2b2e33',
+    'text': '#e6e7e9',
+    'dim': '#8b8f96',
+    'faint': '#5a5e65',
     'shadow': '#000000',
-    'lcd': '#0b141c',
-    'lcd_rim': '#05080b',
-    'lcd_grid': '#182a39',
-    'lcd_axis': '#25425a',
-    'lcd_text': '#6f9fc6',
-    'knob': '#3a3e45',
-    'knob_top': '#5a5f67',
-    'knob_edge': '#141518',
-    'track': '#17191c',
-    'led_off': '#2b2e33',
-    'button': '#363a41',
-    'button_hover': '#454a52',
-    'button_down': '#2c2f35',
-    'warn': '#e0a458',
+    'lcd': '#111215',
+    'lcd_rim': '#2b2e33',
+    'lcd_grid': '#1e2126',
+    'lcd_axis': '#343840',
+    'lcd_text': '#7d828a',
+    'knob': '#2a2d32',
+    'knob_top': '#33363c',
+    'knob_edge': '#3d4148',
+    'track': '#2c2f35',
+    'led_off': '#3a3d43',
+    'button': '#26282d',
+    'button_hover': '#2f3237',
+    'button_down': '#202226',
+    'button_edge': '#363940',
+    'warn': '#ff9a3d',
 }
 
 # 장치마다 다른 판 색과 눈금 색. 색은 꾸밈이고 무엇인지는 언제나 이름이 말한다.
 # 저자가 적녹색약이라 초록은 쓰지 않는다 — 파랑과 주황이 갈리는 축이다.
 FACES = {
-    'master': ('#2a2d32', '#4c9aff'),
-    'preamp': ('#30343a', '#dfe4ea'),
-    'parametric': ('#1f3347', '#5aa9ff'),
-    'graphic': ('#2b3240', '#7cc4ff'),
-    'delay': ('#3b3224', '#ffb04d'),
-    'stereo': ('#302a3d', '#b7a3ff'),
-    'vst': ('#1c1e22', '#ffb04d'),
-    'custom': ('#2a2b2e', '#9aa1aa'),
+    'master': ('#1d1f23', '#3d9bff'),
+    'preamp': ('#1d1f23', '#c9ccd1'),
+    'parametric': ('#1d1f23', '#3d9bff'),
+    'graphic': ('#1d1f23', '#62b2ff'),
+    'delay': ('#1d1f23', '#ff9a3d'),
+    'stereo': ('#1d1f23', '#a894ff'),
+    'vst': ('#1d1f23', '#ff9a3d'),
+    'custom': ('#1d1f23', '#8b8f96'),
 }
 
+# 모든 판의 이름 띠 높이. 접은 장치는 이 띠만 남는다.
+HEADER_BAND = 30
+TITLE_SIZE = 9
+KNOB_RADIUS = 14
+LABEL_HEIGHT = 11
+LABEL_GAP = 5
 KNOB_SWEEP = math.radians(270)
 KNOB_START = math.radians(135)
 DRAG_RANGE = 180.0
@@ -94,10 +100,7 @@ def draw_text(gc, text, x, y, size, colour, bold=False, align='left', engraved=F
         x -= width / 2
     elif align == 'right':
         x -= width
-    if engraved:
-        set_font(gc, size, RACK['shadow'], bold)
-        gc.DrawText(text, x, y + 1)
-        set_font(gc, size, colour, bold)
+    # 판이 평평하니 새긴 글씨의 그림자도 없다. engraved 는 옛 부름을 받아 주기만 한다.
     gc.DrawText(text, x, y)
     return width, height
 
@@ -119,72 +122,54 @@ def fill_rect(gc, colour, x, y, width, height, radius=0):
         gc.DrawRectangle(x, y, width, height)
 
 
-def draw_screw(gc, cx, cy, radius=4.5):
-    gc.SetPen(wx.TRANSPARENT_PEN)
-    gc.SetBrush(gc.CreateRadialGradientBrush(
-        cx - radius * 0.4, cy - radius * 0.4, cx, cy, radius * 1.3,
-        wx.Colour('#c4c9cf'), wx.Colour(RACK['screw_dark'])))
-    gc.DrawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
-    gc.SetPen(get_pen(gc, '#2a2d31', 1.4))
-    arm = radius * 0.62
-    gc.StrokeLine(cx - arm, cy - arm * 0.35, cx + arm, cy + arm * 0.35)
-
-
 def draw_rails(gc, x, y, width, height, ear):
-    '''랙 양옆 기둥. 나사 구멍은 1U 마다 셋 — 실제 랙과 같은 박자다.'''
-    for left in (x, x + width - ear):
-        fill_rect(gc, RACK['rail'], left, y, ear, height)
-        fill_rect(gc, RACK['rail_edge'], left + (ear - 1 if left == x else 0), y, 1, height)
-        hole = 6
-        step = 13.33
-        top = y + 4
-        while top < y + height - hole:
-            fill_rect(gc, RACK['hole'], left + (ear - hole) / 2, top, hole, hole, 1)
-            top += step
+    '''레일은 없다(NI 식 평평한 랙). 판 뒤 바닥만 칠한다.'''
+    fill_rect(gc, RACK['bg'], x, y, width, height)
 
 
-def draw_faceplate(gc, x, y, width, height, face, ear):
-    '''장치 앞판. 위 가장자리는 빛을 받고 아래는 그늘이 진다. 귀에는 나사 둘씩.'''
-    top, bottom = mix(face, '#ffffff', 0.10), mix(face, '#000000', 0.18)
-    gc.SetPen(wx.TRANSPARENT_PEN)
-    gc.SetBrush(gc.CreateLinearGradientBrush(x, y, x, y + height,
-                                             wx.Colour(top), wx.Colour(bottom)))
-    gc.DrawRectangle(x, y, width, height)
-    fill_rect(gc, mix(face, '#ffffff', 0.28), x, y, width, 1)
-    fill_rect(gc, mix(face, '#000000', 0.55), x, y + height - 1, width, 1)
-    # 귀와 판 사이의 접힌 금.
-    for left in (x + ear, x + width - ear - 1):
-        fill_rect(gc, mix(face, '#000000', 0.35), left, y + 1, 1, height - 2)
+def draw_faceplate(gc, x, y, width, height, face, ear, accent=None):
+    '''장치 판. 평평한 숯색 본체 위에 한 톤 어두운 이름 띠, 띠 아래 1 px 선. 장치 색은 띠
+    왼쪽 끝의 가는 줄에만 쓴다. 띠는 판 키와 상관없이 같아 접어도 그대로 보인다.'''
+    fill_rect(gc, RACK['panel'], x, y, width, height, 3)
+    band = min(height, HEADER_BAND)
+    fill_rect(gc, RACK['band'], x, y, width, band, 3)
+    if height > HEADER_BAND:
+        fill_rect(gc, RACK['band'], x, y + band - 3, width, 3)
+        fill_rect(gc, RACK['line'], x, y + HEADER_BAND, width, 1)
+    if accent:
+        fill_rect(gc, accent, x, y + 6, 2, band - 12, 1)
 
-    screws = (y + 10, y + height - 10) if height > 40 else (y + height / 2,)
-    for cy in screws:
-        draw_screw(gc, x + ear / 2, cy)
-        draw_screw(gc, x + width - ear / 2, cy)
+
+def draw_title(gc, left, y, title, subtitle, tone, limit):
+    '''이름 띠의 제목과 부제. 모든 판이 같은 크기·같은 자리에 쓴다 — 접어도 그대로다.'''
+    middle = y + HEADER_BAND / 2
+    set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
+    title = fit_text(gc, title.upper(), limit)
+    # 제목은 굵게, 부제는 흐리게 — NI 처럼 대문자 제목 한 줄.
+    width = draw_text(gc, title, left, middle - 8, TITLE_SIZE, RACK['text'], bold=True,
+                      engraved=True)[0]
+    if subtitle:
+        set_font(gc, 8, tone)
+        subtitle = fit_text(gc, subtitle, max(0, limit - width - 12))
+        draw_text(gc, subtitle, left + width + 12, middle - 6, 8, tone, engraved=True)
+    return width
 
 
 def draw_led(gc, cx, cy, on, colour, radius=5.5):
-    gc.SetPen(wx.TRANSPARENT_PEN)
-    if on:
-        glow = wx.Colour(colour)
-        gc.SetBrush(gc.CreateRadialGradientBrush(
-            cx, cy, cx, cy, radius * 2.6,
-            wx.Colour(glow.Red(), glow.Green(), glow.Blue(), 90),
-            wx.Colour(glow.Red(), glow.Green(), glow.Blue(), 0)))
-        gc.DrawEllipse(cx - radius * 2.6, cy - radius * 2.6, radius * 5.2, radius * 5.2)
-        gc.SetBrush(gc.CreateRadialGradientBrush(
-            cx - radius * 0.3, cy - radius * 0.3, cx, cy, radius,
-            wx.Colour(mix(colour, '#ffffff', 0.6)), wx.Colour(colour)))
-    else:
-        gc.SetBrush(wx.Brush(wx.Colour(RACK['led_off'])))
-    gc.DrawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
-    gc.SetPen(get_pen(gc, '#0c0d0f', 1))
+    '''켜고 끄기. LED 대신 전원 기호 — 켜지면 장치 색, 꺼지면 흐린 회색.'''
+    tone = colour if on else RACK['led_off']
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(tone)).Width(1.6).Cap(wx.CAP_ROUND)))
     gc.SetBrush(wx.TRANSPARENT_BRUSH)
-    gc.DrawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
+    arc = gc.CreatePath()
+    arc.AddArc(cx, cy + 0.5, radius, math.radians(-60), math.radians(240), True)
+    gc.StrokePath(arc)
+    gc.StrokeLine(cx, cy - radius - 0.5, cx, cy - 1)
 
 
 def draw_lcd(gc, rect):
-    fill_rect(gc, RACK['lcd_rim'], rect.x - 2, rect.y - 2, rect.width + 4, rect.height + 4, 4)
-    fill_rect(gc, RACK['lcd'], rect.x, rect.y, rect.width, rect.height, 3)
+    '''화면. 평평한 검은 판에 1 px 테두리.'''
+    fill_rect(gc, RACK['lcd_rim'], rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2, 3)
+    fill_rect(gc, RACK['lcd'], rect.x, rect.y, rect.width, rect.height, 2)
 
 
 def get_arc(gc, cx, cy, radius, start, end):
@@ -269,8 +254,10 @@ class Knob(Control):
     cursor = wx.CURSOR_SIZENS
 
     def __init__(self, label, get, put, low, high, default, text, log=False,
-                 bipolar=False, step=None):
+                 bipolar=False, step=None, ends=None):
         super().__init__()
+        # 값 호 양 끝 아래의 최소·최대 글씨(Harrison 콘솔처럼). 없으면 쓰지 않는다.
+        self.ends = ends
         self.label = label
         self.get = get
         self.put = put
@@ -320,51 +307,125 @@ class Knob(Control):
     def on_dclick(self, point):
         self.put(self.default)
 
+    def get_reach(self, gc, width):
+        '''가운데에서 보이는 왼쪽 끝까지. 값 글씨는 바뀌어 넣지 않는다(놓인 자리가 춤춘다).'''
+        radius = min(width / 2 - 4, KNOB_RADIUS)
+        track = radius + 3
+        reach = track + 1.5
+        set_font(gc, 7.5, RACK['dim'])
+        reach = max(reach, gc.GetTextExtent(fit_text(gc, self.label, width - 2))[0] / 2)
+        if self.ends:
+            set_font(gc, 6, RACK['faint'])
+            reach = max(reach, -math.cos(KNOB_START) * (track + 2) + 1 +
+                        gc.GetTextExtent(self.ends[0])[0])
+        return reach
+
     def draw(self, gc, accent):
         rect = self.rect
         cx = rect.x + rect.width / 2
-        radius = min(rect.width / 2 - 4, 15)
+        radius = min(rect.width / 2 - 4, KNOB_RADIUS)
         # 플러그인 파라미터 이름은 길이를 플러그인이 정한다. 옆 손잡이에 닿기 전에 자른다.
         set_font(gc, 7.5, RACK['dim'])
         label = fit_text(gc, self.label, rect.width - 2)
         draw_text(gc, label, cx, rect.y, 7.5, RACK['dim'], align='center', engraved=True)
-        cy = rect.y + 14 + radius + 2
+        # 이름 글씨 아래로 값 호의 바깥 끝까지 LABEL_GAP 을 띄운다. 호는 반지름 + 3 에 3 화소 굵기.
+        cy = rect.y + LABEL_HEIGHT + LABEL_GAP + radius + 4.5
 
         ratio = self.to_ratio(self.get()) if self.enabled else 0.0
         track = radius + 3
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(RACK['track'])).Width(3)
-                               .Cap(wx.CAP_ROUND)))
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(RACK['track'])).Width(2.5)
+                               .Cap(wx.CAP_BUTT)))
         gc.SetBrush(wx.TRANSPARENT_BRUSH)
         gc.StrokePath(get_arc(gc, cx, cy, track, KNOB_START, KNOB_START + KNOB_SWEEP))
         if self.enabled:
             origin = KNOB_START + KNOB_SWEEP * (0.5 if self.bipolar else 0.0)
             angle = KNOB_START + KNOB_SWEEP * ratio
             if abs(angle - origin) > 0.01:
-                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(accent)).Width(3)
-                                       .Cap(wx.CAP_ROUND)))
+                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(accent)).Width(2.5)
+                                       .Cap(wx.CAP_BUTT)))
                 gc.StrokePath(get_arc(gc, cx, cy, track, origin, angle))
 
-        body = radius - 1
-        gc.SetPen(get_pen(gc, RACK['knob_edge'], 1))
-        gc.SetBrush(gc.CreateRadialGradientBrush(
-            cx - body * 0.35, cy - body * 0.45, cx, cy, body * 1.25,
-            wx.Colour(RACK['knob_top']), wx.Colour(RACK['knob'])))
+        # 몸통은 평평한 원판 하나. 손이 얹히면 테두리만 밝아진다.
+        body = radius - 2
+        lit = self.hovered or self.pressed
+        gc.SetPen(get_pen(gc, mix(RACK['knob_edge'], '#ffffff', 0.18) if lit else
+                          RACK['knob_edge'], 1))
+        gc.SetBrush(wx.Brush(wx.Colour(RACK['knob_top'] if lit else RACK['knob'])))
         gc.DrawEllipse(cx - body, cy - body, body * 2, body * 2)
-        if self.hovered or self.pressed:
-            gc.SetPen(get_pen(gc, mix(RACK['knob_top'], '#ffffff', 0.3), 1))
-            gc.SetBrush(wx.TRANSPARENT_BRUSH)
-            gc.DrawEllipse(cx - body, cy - body, body * 2, body * 2)
-
         angle = KNOB_START + KNOB_SWEEP * ratio
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(
-            wx.Colour('#f2f4f6' if self.enabled else RACK['faint'])).Width(2)
+            wx.Colour(RACK['text'] if self.enabled else RACK['faint'])).Width(2)
             .Cap(wx.CAP_ROUND)))
-        gc.StrokeLine(cx + math.cos(angle) * body * 0.30, cy + math.sin(angle) * body * 0.30,
-                      cx + math.cos(angle) * body * 0.82, cy + math.sin(angle) * body * 0.82)
+        gc.StrokeLine(cx + math.cos(angle) * body * 0.20, cy + math.sin(angle) * body * 0.20,
+                      cx + math.cos(angle) * body * 0.78, cy + math.sin(angle) * body * 0.78)
 
+        if self.ends:
+            for text, angle, align in ((self.ends[0], KNOB_START, 'right'),
+                                       (self.ends[1], KNOB_START + KNOB_SWEEP, 'left')):
+                x = cx + math.cos(angle) * (track + 2)
+                y = cy + math.sin(angle) * (track + 2)
+                draw_text(gc, text, x + (-1 if align == 'right' else 1), y - 3, 6, RACK['faint'],
+                          align=align)
         value = self.text(self.get()) if self.enabled else '—'
-        draw_text(gc, value, cx, cy + radius + 5, 7.5,
+        draw_text(gc, value, cx, cy + radius + 4, 7.5,
                   RACK['text'] if self.enabled else RACK['faint'], align='center')
+
+
+class Switch(Control):
+    '''켜고 끄는 값(플러그인의 ON/OFF 파라미터). 손잡이와 같은 칸에 같은 이름 줄, 손잡이
+    자리에 글씨 단추 하나. 누를 때마다 0 과 1 을 오간다. 켜지면 장치 색.'''
+
+    WIDTH = 40
+    HEIGHT = 20
+
+    def __init__(self, label, get, put, text):
+        super().__init__()
+        self.label = label
+        self.get = get
+        self.put = put
+        self.text = text
+
+    def is_on(self):
+        return self.get() >= 0.5
+
+    def get_reach(self, gc, width):
+        set_font(gc, 7.5, RACK['dim'])
+        label = gc.GetTextExtent(fit_text(gc, self.label, width - 2))[0] / 2
+        return max(label, self.WIDTH / 2)
+
+    def get_button(self):
+        rect = self.rect
+        radius = min(rect.width / 2 - 4, KNOB_RADIUS)
+        cy = rect.y + LABEL_HEIGHT + LABEL_GAP + radius + 4.5
+        return wx.Rect(int(rect.x + (rect.width - self.WIDTH) / 2), int(cy - self.HEIGHT / 2),
+                       self.WIDTH, self.HEIGHT)
+
+    def on_click(self):
+        self.put(0.0 if self.is_on() else 1.0)
+
+    def on_dclick(self, point):
+        # 빨리 두 번 누르면 두 번째 누름은 두 번 누름으로 온다. 그것도 한 번 누름이다.
+        self.on_click()
+
+    def draw(self, gc, accent):
+        rect = self.rect
+        cx = rect.x + rect.width / 2
+        set_font(gc, 7.5, RACK['dim'])
+        label = fit_text(gc, self.label, rect.width - 2)
+        draw_text(gc, label, cx, rect.y, 7.5, RACK['dim'], align='center')
+        button = self.get_button()
+        on = self.is_on() and self.enabled
+        lit = self.hovered or self.pressed
+        fill = accent if on else RACK['button_hover'] if lit else RACK['button']
+        gc.SetPen(get_pen(gc, fill if on else RACK['button_edge'], 1))
+        gc.SetBrush(wx.Brush(wx.Colour(fill)))
+        gc.DrawRoundedRectangle(button.x + 0.5, button.y + 0.5, button.width - 1,
+                                button.height - 1, 3)
+        text = (self.text(self.get()) or ('ON' if on else 'OFF')).strip().upper()
+        set_font(gc, 7.5, RACK['text'], bold=True)
+        text = fit_text(gc, text, button.width - 6)
+        draw_text(gc, text, cx, button.y + 3.5, 7.5, '#101215' if on else RACK['dim'],
+                  bold=True, align='center')
 
 
 class Fader(Control):
@@ -422,17 +483,17 @@ class Fader(Control):
         rect = self.rect
         cx = rect.x + rect.width / 2
         top, bottom = self.get_slot()
-        fill_rect(gc, RACK['track'], cx - 2, top, 4, bottom - top, 2)
+        fill_rect(gc, RACK['track'], cx - 1, top, 2, bottom - top, 1)
         zero = self.to_y(0)
         y = self.to_y(self.get())
-        fill_rect(gc, accent, cx - 2, min(zero, y), 4, abs(zero - y), 1)
+        fill_rect(gc, accent, cx - 1, min(zero, y), 2, abs(zero - y), 1)
 
         width, height = self.THUMB
-        fill = RACK['knob_top'] if (self.hovered or self.pressed) else RACK['knob']
-        gc.SetPen(get_pen(gc, RACK['knob_edge'], 1))
-        gc.SetBrush(wx.Brush(wx.Colour(fill)))
-        gc.DrawRoundedRectangle(cx - width / 2, y - height / 2, width, height, 2)
-        fill_rect(gc, '#f2f4f6', cx - width / 2 + 2, y - 0.5, width - 4, 1)
+        lit = self.hovered or self.pressed
+        gc.SetPen(wx.TRANSPARENT_PEN)
+        gc.SetBrush(wx.Brush(wx.Colour('#e6e7e9' if lit else '#c4c7cc')))
+        gc.DrawRoundedRectangle(cx - width / 2, y - height / 2, width, height, 1.5)
+        fill_rect(gc, '#2a2d32', cx - width / 2 + 2, y - 0.5, width - 4, 1)
 
         if self.hovered or self.pressed:
             draw_text(gc, self.text(self.get()), cx, rect.y, 7, RACK['text'], align='center')
@@ -489,11 +550,9 @@ class Button(Control):
             fill = RACK['button_hover']
         else:
             fill = RACK['button']
-        gc.SetPen(get_pen(gc, '#0c0d0f', 1))
+        gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
         gc.SetBrush(wx.Brush(wx.Colour(fill)))
-        gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 4)
-        if not lit:
-            fill_rect(gc, mix(fill, '#ffffff', 0.10), rect.x + 2, rect.y + 1, rect.width - 4, 1)
+        gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
         caption = self.confirm if self.asking is not None else self.caption
         colour = '#101215' if lit else (RACK['warn'] if self.asking is not None else
                                         RACK['text'] if self.enabled else RACK['faint'])
@@ -613,7 +672,7 @@ class Segment(Control):
                 fill = RACK['button']
             if not self.enabled:
                 fill = mix(RACK['button'], RACK['bg'], 0.5)
-            gc.SetPen(get_pen(gc, '#0c0d0f', 1))
+            gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
             gc.SetBrush(wx.Brush(wx.Colour(fill)))
             gc.DrawRoundedRectangle(cell.x + 0.5, cell.y + 0.5, cell.width - 1,
                                     cell.height - 1, 3)

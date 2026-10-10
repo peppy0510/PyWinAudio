@@ -48,15 +48,15 @@ MSGFLT_ALLOW = 1
 
 THEMES = {
     'dark': {
-        'bg': '#1b1d21',
-        'face': '#25282d',
-        'rim': '#3a3f46',
-        'track': '#3a3f46',
+        'bg': '#141517',
+        'face': '#1d1f23',
+        'rim': '#2b2e33',
+        'track': '#2b2e33',
         'text': '#e6e9ed',
         'dim': '#8b929b',
         'accent': '#4c9aff',
-        'control': '#2f333a',
-        'warn': '#e0a458',
+        'control': '#26282d',
+        'warn': '#ff9a3d',
         # 저자가 적녹색약이다. 끝난 상태는 초록이 아니라 파랑 — 주황과 갈리는 축이다.
         'done': '#4c9aff',
         'close': '#c42b1c',

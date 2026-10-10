@@ -1,4 +1,5 @@
 numpy
+pycaw
 pywin32
 soundcard
 wxpython
