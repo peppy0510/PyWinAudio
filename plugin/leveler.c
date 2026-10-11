@@ -1,0 +1,923 @@
+/*
+ * author: Taehong Kim
+ * email: peppy0510@hotmail.com
+ *
+ * PyWinAudio Leveler — 방송 프로세서처럼 소리를 고르게 다듬는 VST2 플러그인 첫 단계.
+ * 자동 레벨(AGC)과 미리 보는 피크 리미터 둘. Equalizer APO 가 audiodg 안에서 올려
+ * 실시간으로 돌린다. 화면은 없고, 랙이 파라미터를 손잡이·단추로 보여 준다.
+ *
+ * VST2 의 바깥 모양(AEffect 구조체와 함수 포인터 넷, 디스패처 번호)은 source/vsthost.py
+ * 와 같은 배치를 여기에 직접 적는다. Steinberg SDK 는 쓰지 않는다.
+ *
+ * AGC: 들어오는 소리를 BS.1770 K 가중으로 재고(약 3 초 평균) 목표 라우드니스까지 이득을
+ * 천천히 움직인다. 재는 것은 이득을 걸기 전 소리라 제 출력을 쫓는 되먹임이 없다. 조용하면
+ * (0.05 초 라우드니스가 -45 LUFS 아래) 재는 값도 이득도 그대로 둔다. 긴 평균보다 10 dB 넘게
+ * 낮은 쉼·페이드에서는 열 배 느리게 따라간다 — 곡 사이 무음에서
+ * 이득이 치솟지 않고, 소리가 돌아왔을 때 무음 동안 줄어든 평균 때문에 튀지도 않게.
+ *
+ * 리미터: 5 ms 앞을 내다보고 줄인다. 앞으로 올 피크까지 필요한 이득의 최솟값을 창으로 잡고,
+ * 같은 길이의 상자 평균으로 매끈하게 내려가 피크가 올 때 정확히 그 값에 닿는다. 풀릴 때는
+ * 따로 천천히. 소리는 그만큼 늦게 나가고, 그 늦음을 initialDelay 로 알린다.
+ *
+ * 스테레오 보정(AGC 와 리미터 사이): 들어오는 소리를 약 5 초 평균으로 재서
+ *   좌우 균형 — 한쪽이 늘 크면 양쪽에 반씩 나눠 맞춘다(최대 ±3 dB씩).
+ *   폭 상한 — 옆(S)이 가운데(M) 대비 상한(Max Width)보다 크면(지나치게 넓거나 위상이 어긋난
+ *     소리) 그만큼 S 를 줄인다(최대 6 dB). 넓히지는 않는다 — 넓히기는 모노 넓히기가 모자란
+ *     만큼만 맡고, 괜찮은 스테레오는 그대로 나간다(사용자).
+ *   저역 모노 — 120 Hz 아래의 S 를 걷어 낮은 소리를 가운데로 모은다.
+ *   모노 넓히기 — 거의 모노면 M 을 벨벳 노이즈(듬성한 무작위 ±1 펄스열, 25 ms, 초당 1500 개,
+ *     뒤로 갈수록 작아지게)에 통과시켜 가짜 S 를 만들고 L 에 더하고 R 에서 뺀다(Alary·Politis·
+ *     Välimäki DAFx-17 의 벨벳 노이즈 비상관기). 몇 갈래 지연을 더하던 것보다 빗살 색이 덜
+ *     묻고 넓게 퍼진다. L+R 은 원래 소리 그대로라 모노로 들어도 빗살이 생기지 않는다. 150 Hz
+ *     아래는 만들지 않아 킥·서브 베이스는 가운데에 남는다. 타격음(빠른 포락이 느린 포락보다
+ *     6 dB 넘게 높을 때)에서는 가짜 S 를 잠깐 줄여 어택이 번지지 않게 한다(DAFx-24 StereoWidener
+ *     의 트랜지언트 처리와 같은 생각).
+ *     넓이는 300 Hz–4 kHz 의 S/M 으로 잰다. 악기 자리가 있는 곳이 거기다. 전 대역으로 보면
+ *     MP3 가 고역에 남긴 S(-20 dB 안팎) 때문에 거의 모노인 곡도 반쯤 스테레오로 읽혔다.
+ *     가짜 S 는 모자란 만큼만 채운다: 목표 넓이(Wide Target)의 S 에너지에서 지금 있는 S 를
+ *     뺀 나머지. 이미 목표만큼 넓은 소리에는 아무것도 더하지 않아 그대로 나가고, 모노는 목표
+ *     까지, 좁은 소리는 모자란 만큼만 넓어진다 — 방송 중에 곡마다 맞출 수 없으니(사용자).
+ * 무음에서는 AGC 처럼 재기를 멈춘다.
+ *
+ * 계기: 단계마다 지금 얼마나 고치고 있는지(AGC 이득, 좌우 보정, 폭 줄임, 모노 채움, 리미터
+ * 줄임)를 블록마다 공유 메모리 "Global\PyWinAudioLeveler" 에 적는다. 플러그인은 audiodg(세션 0,
+ * LocalService) 안에 있고 랙은 사용자 세션에 있어 Global 이름과 모두 읽을 수 있는 DACL 을 쓴다.
+ * 인스턴스마다 칸 하나를 잡고, 랙은 가장 최근에 소리를 처리한 칸을 읽는다.
+ */
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <xmmintrin.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <sddl.h>
+
+#define MAGIC 0x56737450 /* 'VstP' */
+#define UNIQUE_ID 0x50774C76 /* 'PwLv' */
+#define VERSION 100
+
+#define EFF_OPEN 0
+#define EFF_CLOSE 1
+#define EFF_SET_PROGRAM 2
+#define EFF_GET_PROGRAM 3
+#define EFF_GET_PROGRAM_NAME 5
+#define EFF_GET_PARAM_LABEL 6
+#define EFF_GET_PARAM_DISPLAY 7
+#define EFF_GET_PARAM_NAME 8
+#define EFF_SET_SAMPLE_RATE 10
+#define EFF_SET_BLOCK_SIZE 11
+#define EFF_MAINS_CHANGED 12
+#define EFF_GET_PLUG_CATEGORY 35
+#define EFF_GET_EFFECT_NAME 45
+#define EFF_GET_VENDOR_STRING 47
+#define EFF_GET_PRODUCT_STRING 48
+#define EFF_GET_VENDOR_VERSION 49
+#define EFF_CAN_DO 51
+#define EFF_GET_PARAMETER_PROPERTIES 56
+#define EFF_GET_VST_VERSION 58
+
+#define PARAM_IS_SWITCH (1 << 0)
+#define PARAM_SUPPORTS_DISPLAY_CATEGORY (1 << 5)
+
+/* VST2 의 VstParameterProperties. 호스트가 묶음(구역)과 켜고 끄는 값을 알 수 있다. */
+typedef struct {
+    float stepFloat, smallStepFloat, largeStepFloat;
+    char label[64];
+    int32_t flags;
+    int32_t minInteger, maxInteger, stepInteger, largeStepInteger;
+    char shortLabel[8];
+    int16_t displayIndex;
+    int16_t category;
+    int16_t numParametersInCategory;
+    int16_t reserved;
+    char categoryLabel[24];
+    char future[16];
+} ParameterProperties;
+
+#define FLAG_CAN_REPLACING (1 << 4)
+#define CATEGORY_MASTERING 4
+
+#define MASTER_VERSION 1
+
+typedef struct AEffect AEffect;
+typedef intptr_t (*AudioMaster)(AEffect *, int32_t, int32_t, intptr_t, void *, float);
+typedef intptr_t (*Dispatcher)(AEffect *, int32_t, int32_t, intptr_t, void *, float);
+typedef void (*Process)(AEffect *, float **, float **, int32_t);
+typedef void (*SetParameter)(AEffect *, int32_t, float);
+typedef float (*GetParameter)(AEffect *, int32_t);
+
+struct AEffect {
+    int32_t magic;
+    Dispatcher dispatcher;
+    Process process;
+    SetParameter setParameter;
+    GetParameter getParameter;
+    int32_t numPrograms;
+    int32_t numParams;
+    int32_t numInputs;
+    int32_t numOutputs;
+    int32_t flags;
+    intptr_t resvd1;
+    intptr_t resvd2;
+    int32_t initialDelay;
+    int32_t realQualities;
+    int32_t offQualities;
+    float ioRatio;
+    void *object;
+    void *user;
+    int32_t uniqueID;
+    int32_t version;
+    Process processReplacing;
+    void *processDoubleReplacing;
+    char future[56];
+};
+
+/* ------------------------------------------------------------ 파라미터 */
+
+enum {
+    P_AGC,
+    P_TARGET,
+    P_MAX_GAIN,
+    P_SPEED,
+    P_STEREO,
+    P_WIDTH,
+    P_BASS_MONO,
+    P_MONO_WIDE,
+    P_WIDE_AMOUNT,
+    P_LIMITER,
+    P_CEILING,
+    PARAM_COUNT
+};
+
+static const char *PARAM_NAMES[PARAM_COUNT] = {
+    "AGC", "Target", "Max Gain", "Speed", "Stereo", "Max Width", "Bass Mono", "Mono Wide",
+    "Wide Target", "Limiter", "Ceiling"
+};
+/* 구역: 1 AGC, 2 Stereo, 3 Limiter. 랙이 구역 사이에 금을 긋는다. */
+static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3};
+static const char *CATEGORY_LABELS[4] = {"", "AGC", "Stereo", "Limiter"};
+static const char *PARAM_LABELS[PARAM_COUNT] = {
+    "", "LUFS", "dB", "s", "", "S/M dB", "", "", "S/M dB", "", "dB"
+};
+/* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 스테레오 보정 켬, S/M -10 dB, 저역 모노 켬,
+ * (폭 상한 S/M -6 dB), 모노 넓히기 켬, 목표 넓이 S/M -8 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지
+ * 않는다), 리미터 켬, -1 dBFS. */
+static const float PARAM_DEFAULTS[PARAM_COUNT] = {
+    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.0f / 18.0f, 1.0f, 5.0f / 6.0f
+};
+
+#define TARGET_LOW -24.0
+#define TARGET_HIGH -8.0
+#define MAX_GAIN_HIGH 18.0
+#define MIN_GAIN -12.0
+#define CEILING_LOW -6.0
+#define GATE_LUFS -45.0
+#define MEASURE_TIME 3.0
+#define GATE_TIME 0.05
+/* 짧은 라우드니스가 긴 평균보다 이만큼 낮으면(곡 사이 쉼·페이드) 재는 것도 이득도 열 배
+ * 느리게 따라간다. 아주 멈추면 크게 조용해진 곡에 끝내 맞추지 못한다. */
+#define RELATIVE_GATE 10.0
+#define RELATIVE_SLOW 0.1
+#define STEREO_TIME 5.0
+#define STEREO_FOLLOW 2.0
+#define BALANCE_LIMIT 6.0      /* 좌우 차이를 이만큼까지 고친다(한쪽에 반씩, ±3 dB) */
+#define SIDE_LIMIT 6.0
+#define WIDTH_LOW -18.0
+#define WIDTH_HIGH -4.0
+#define MONO_SOURCE -30.0      /* S 가 M 보다 이만큼 낮으면 모노 소스 */
+#define BASS_MONO_HZ 120.0
+#define WIDE_LOW -18.0
+#define WIDE_HIGH 0.0
+#define DETECT_LOW_HZ 300.0
+#define DETECT_HIGH_HZ 4000.0
+#define WIDE_HZ 150.0
+#define MAX_WIDE_DELAY 8192    /* 192 kHz 에서 42 ms — 가장 긴 갈래 27 ms 를 넉넉히 담는다 */
+#define VELVET_LENGTH 0.025      /* 초 */
+#define VELVET_DENSITY 1500.0    /* 초당 펄스 */
+#define VELVET_DECAY -30.0       /* 끝 펄스의 크기(dB) */
+#define MAX_PULSES 64
+#define TRANSIENT_RATIO 3.0      /* 빠른/느린 포락 비(9.5 dB) 넘으면 타격음 */
+#define TRANSIENT_DUCK 0.4       /* 타격음 동안 가짜 S 를 이만큼으로(킥이 많은 곡도 평균 넓이를 크게 잃지 않게) */
+#define FAST_TIME 0.001
+#define SLOW_TIME 0.05
+#define DUCK_RELEASE 0.03
+#define LOOKAHEAD_TIME 0.005
+#define RELEASE_TIME 0.08
+#define MAX_LOOKAHEAD 1024
+
+/* ------------------------------------------------------------ 계기(공유 메모리) */
+
+#define METER_MAGIC 0x4D4C5750 /* 'PWLM' */
+#define METER_VERSION 1
+#define METER_SLOTS 8
+
+typedef struct {
+    volatile LONG64 owner;  /* 칸을 쥔 인스턴스(포인터 값). 0 이면 빈 칸 */
+    volatile LONG64 tick;   /* 마지막으로 소리를 처리한 GetTickCount64 */
+    float agc_db;           /* 지금 거는 AGC 이득 */
+    float balance_db;       /* 좌우 보정(+ 면 왼쪽을 내림) */
+    float side_db;          /* 폭 줄임(0 이하) */
+    float fill_db;          /* 모노 채움의 가짜 S 크기(M 대비 dB, 없으면 -120) */
+    float limiter_db;       /* 이 블록에서 리미터가 가장 깊게 줄인 값(0 이하) */
+    float loudness;         /* 재고 있는 입력 라우드니스(LUFS) */
+    int32_t sounding;
+    int32_t reserved;
+} MeterSlot;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    MeterSlot slots[METER_SLOTS];
+} MeterBlock;
+
+static HANDLE meter_mapping = NULL;
+static MeterBlock *meter_block = NULL;
+
+static MeterBlock *open_meters(void)
+{
+    if (meter_block != NULL)
+        return meter_block;
+    SECURITY_ATTRIBUTES attributes = {sizeof(attributes), NULL, FALSE};
+    PSECURITY_DESCRIPTOR descriptor = NULL;
+    /* 누구나 읽고 쓰기(랙은 읽기만 한다). */
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:(A;;GA;;;WD)", SDDL_REVISION_1,
+                                                              &descriptor, NULL))
+        attributes.lpSecurityDescriptor = descriptor;
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0,
+                                        sizeof(MeterBlock), L"Global\\PyWinAudioLeveler");
+    if (mapping == NULL)
+        mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0,
+                                     sizeof(MeterBlock), L"Local\\PyWinAudioLeveler");
+    if (descriptor != NULL)
+        LocalFree(descriptor);
+    if (mapping == NULL)
+        return NULL;
+    MeterBlock *block = (MeterBlock *)MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0,
+                                                    sizeof(MeterBlock));
+    if (block == NULL) {
+        CloseHandle(mapping);
+        return NULL;
+    }
+    block->magic = METER_MAGIC;
+    block->version = METER_VERSION;
+    meter_mapping = mapping;
+    meter_block = block;
+    return block;
+}
+
+static MeterSlot *claim_slot(void *owner)
+{
+    MeterBlock *block = open_meters();
+    if (block == NULL)
+        return NULL;
+    ULONGLONG now = GetTickCount64();
+    for (int index = 0; index < METER_SLOTS; index++) {
+        MeterSlot *slot = &block->slots[index];
+        LONG64 current = slot->owner;
+        /* 비었거나 10 초 넘게 아무도 안 쓴(죽은 프로세스가 남긴) 칸을 차지한다. */
+        if (current == 0 || now - (ULONGLONG)slot->tick > 10000) {
+            if (InterlockedCompareExchange64(&slot->owner, (LONG64)(intptr_t)owner, current) ==
+                current) {
+                slot->tick = 0;
+                return slot;
+            }
+        }
+    }
+    return NULL;
+}
+
+/* ------------------------------------------------------------ 상태 */
+
+typedef struct {
+    double b0, b1, b2, a1, a2;
+    double z1[2], z2[2];
+} Biquad;
+
+typedef struct {
+    AEffect effect;
+    AudioMaster master;
+    float params[PARAM_COUNT];
+    double rate;
+
+    Biquad shelf, highpass;
+    double power;          /* K 가중 평균 제곱(두 채널 합) */
+    double power_coef;
+    double momentary;      /* 0.05 초 평균 제곱 — 무음·쉼 판정용 */
+    double momentary_coef;
+    double gain_db;        /* 지금 걸고 있는 AGC 이득 */
+
+    double left_power, right_power, mid_power, side_power;
+    double stereo_coef, follow_coef;
+    double balance_db;     /* 왼쪽이 크면 + — 왼쪽을 반만큼 내리고 오른쪽을 반만큼 올린다 */
+    double side_db;        /* S 에 걸고 있는 이득 */
+    Biquad bass;           /* S 의 120 Hz 고역 통과 */
+    Biquad wide_highpass;  /* 가짜 S 의 300 Hz 고역 통과 */
+    Biquad detect_high, detect_low;  /* 모노 판정용 300 Hz–4 kHz 띠(0 = M, 1 = S) */
+    double detect_mid, detect_side;
+    float wide_delay[MAX_WIDE_DELAY];
+    int wide_head;
+    int pulse_count;
+    int pulse_at[MAX_PULSES];      /* 펄스 자리(표본) */
+    float pulse_gain[MAX_PULSES];  /* 부호 × 크기, 제곱합 1 */
+    double fast_env, slow_env, duck;
+    double fast_coef, slow_coef, duck_coef;
+    double wide_mix;       /* 지금 섞고 있는 가짜 S 의 크기(M 대비 배율) */
+
+    int lookahead;         /* 리미터가 내다보는 표본 수 */
+    float delay[2][MAX_LOOKAHEAD];
+    float wanted[MAX_LOOKAHEAD];  /* 표본마다 필요한 이득 */
+    float held[MAX_LOOKAHEAD];    /* 창 최솟값(풀림 적용 뒤) */
+    int head;
+    double held_sum;
+    double release;        /* 지금 풀리고 있는 이득 */
+    MeterSlot *meter;      /* 계기 칸(없으면 NULL) */
+    double release_coef;
+} Leveler;
+
+static double get_speed_time(float value)
+{
+    /* 0 → 10 초(느림), 1 → 1 초(빠름). 가운데가 약 3 초. */
+    return 10.0 * pow(0.1, value);
+}
+
+static double get_target(const Leveler *self)
+{
+    return TARGET_LOW + (TARGET_HIGH - TARGET_LOW) * self->params[P_TARGET];
+}
+
+static double get_max_gain(const Leveler *self)
+{
+    return MAX_GAIN_HIGH * self->params[P_MAX_GAIN];
+}
+
+static double get_width(const Leveler *self)
+{
+    return WIDTH_LOW + (WIDTH_HIGH - WIDTH_LOW) * self->params[P_WIDTH];
+}
+
+static double get_wide_amount(const Leveler *self)
+{
+    return WIDE_LOW + (WIDE_HIGH - WIDE_LOW) * self->params[P_WIDE_AMOUNT];
+}
+
+static double clamp(double value, double low, double high)
+{
+    return value < low ? low : value > high ? high : value;
+}
+
+static double get_ceiling(const Leveler *self)
+{
+    return CEILING_LOW * (1.0 - self->params[P_CEILING]);
+}
+
+static int is_on(float value)
+{
+    return value >= 0.5f;
+}
+
+/* BS.1770 K 가중의 두 단(높은 선반 + RLB 고역 통과). 표본 빠르기마다 계수를 다시 낸다. */
+static void set_filters(Leveler *self)
+{
+    double rate = self->rate;
+    double f0 = 1681.974450955533, gain = 3.999843853973347, q = 0.7071752369554196;
+    double k = tan(M_PI * f0 / rate);
+    double vh = pow(10.0, gain / 20.0);
+    double vb = pow(vh, 0.4996667741545416);
+    double a0 = 1.0 + k / q + k * k;
+    Biquad *b = &self->shelf;
+    b->b0 = (vh + vb * k / q + k * k) / a0;
+    b->b1 = 2.0 * (k * k - vh) / a0;
+    b->b2 = (vh - vb * k / q + k * k) / a0;
+    b->a1 = 2.0 * (k * k - 1.0) / a0;
+    b->a2 = (1.0 - k / q + k * k) / a0;
+
+    f0 = 38.13547087602444;
+    q = 0.5003270373238773;
+    k = tan(M_PI * f0 / rate);
+    a0 = 1.0 + k / q + k * k;
+    b = &self->highpass;
+    b->b0 = 1.0;
+    b->b1 = -2.0;
+    b->b2 = 1.0;
+    b->a1 = 2.0 * (k * k - 1.0) / a0;
+    b->a2 = (1.0 - k / q + k * k) / a0;
+
+    /* 저역 모노용 2 차 버터워스 고역 통과(S 에만). */
+    double w0 = 2.0 * M_PI * BASS_MONO_HZ / rate;
+    double alpha = sin(w0) / (2.0 * 0.7071067811865476);
+    double c = cos(w0);
+    a0 = 1.0 + alpha;
+    b = &self->bass;
+    b->b0 = (1.0 + c) / 2.0 / a0;
+    b->b1 = -(1.0 + c) / a0;
+    b->b2 = (1.0 + c) / 2.0 / a0;
+    b->a1 = -2.0 * c / a0;
+    b->a2 = (1.0 - alpha) / a0;
+
+    w0 = 2.0 * M_PI * WIDE_HZ / rate;
+    alpha = sin(w0) / (2.0 * 0.7071067811865476);
+    c = cos(w0);
+    a0 = 1.0 + alpha;
+    b = &self->wide_highpass;
+    b->b0 = (1.0 + c) / 2.0 / a0;
+    b->b1 = -(1.0 + c) / a0;
+    b->b2 = (1.0 + c) / 2.0 / a0;
+    b->a1 = -2.0 * c / a0;
+    b->a2 = (1.0 - alpha) / a0;
+}
+
+static void set_pass(Biquad *b, double rate, double hz, int highpass)
+{
+    double w0 = 2.0 * M_PI * hz / rate;
+    double alpha = sin(w0) / (2.0 * 0.7071067811865476);
+    double c = cos(w0);
+    double a0 = 1.0 + alpha;
+    double k = highpass ? (1.0 + c) : (1.0 - c);
+    b->b0 = k / 2.0 / a0;
+    b->b1 = (highpass ? -k : k) / a0;
+    b->b2 = k / 2.0 / a0;
+    b->a1 = -2.0 * c / a0;
+    b->a2 = (1.0 - alpha) / a0;
+}
+
+static double run_biquad(Biquad *b, int channel, double x)
+{
+    double y = b->b0 * x + b->z1[channel];
+    b->z1[channel] = b->b1 * x - b->a1 * y + b->z2[channel];
+    b->z2[channel] = b->b2 * x - b->a2 * y;
+    return y;
+}
+
+static void reset(Leveler *self)
+{
+    int lookahead = (int)(self->rate * LOOKAHEAD_TIME + 0.5);
+    if (lookahead < 1)
+        lookahead = 1;
+    if (lookahead > MAX_LOOKAHEAD)
+        lookahead = MAX_LOOKAHEAD;
+    self->lookahead = lookahead;
+    self->effect.initialDelay = lookahead - 1;
+    set_filters(self);
+    memset(self->shelf.z1, 0, sizeof(self->shelf.z1));
+    memset(self->shelf.z2, 0, sizeof(self->shelf.z2));
+    memset(self->highpass.z1, 0, sizeof(self->highpass.z1));
+    memset(self->highpass.z2, 0, sizeof(self->highpass.z2));
+    self->power_coef = 1.0 - exp(-1.0 / (self->rate * MEASURE_TIME));
+    self->power = 0.0;
+    self->momentary_coef = 1.0 - exp(-1.0 / (self->rate * GATE_TIME));
+    self->momentary = 0.0;
+    self->release_coef = 1.0 - exp(-1.0 / (self->rate * RELEASE_TIME));
+    self->stereo_coef = 1.0 - exp(-1.0 / (self->rate * STEREO_TIME));
+    self->follow_coef = 1.0 - exp(-1.0 / (self->rate * STEREO_FOLLOW));
+    self->left_power = self->right_power = self->mid_power = self->side_power = 0.0;
+    self->balance_db = self->side_db = 0.0;
+    memset(self->bass.z1, 0, sizeof(self->bass.z1));
+    memset(self->bass.z2, 0, sizeof(self->bass.z2));
+    memset(self->wide_highpass.z1, 0, sizeof(self->wide_highpass.z1));
+    memset(self->wide_highpass.z2, 0, sizeof(self->wide_highpass.z2));
+    memset(self->wide_delay, 0, sizeof(self->wide_delay));
+    set_pass(&self->detect_high, self->rate, DETECT_LOW_HZ, 1);
+    set_pass(&self->detect_low, self->rate, DETECT_HIGH_HZ, 0);
+    memset(self->detect_high.z1, 0, sizeof(self->detect_high.z1));
+    memset(self->detect_high.z2, 0, sizeof(self->detect_high.z2));
+    memset(self->detect_low.z1, 0, sizeof(self->detect_low.z1));
+    memset(self->detect_low.z2, 0, sizeof(self->detect_low.z2));
+    self->detect_mid = self->detect_side = 0.0;
+    self->wide_head = 0;
+    /* 벨벳 노이즈: 고른 칸마다 펄스 하나, 칸 안 자리와 부호는 정해진 씨앗의 난수. 매번 같은 열이
+     * 나와 다시 열어도 소리가 바뀌지 않는다. */
+    {
+        /* 씨앗 463: 1~4000 가운데 44.1·48 kHz 모두 1/3 옥타브 응답이 가장 고른 열(편차 0.6 dB). */
+        unsigned int seed = 463u;
+        int length = (int)(self->rate * VELVET_LENGTH);
+        if (length > MAX_WIDE_DELAY - 1)
+            length = MAX_WIDE_DELAY - 1;
+        int count = (int)(VELVET_LENGTH * VELVET_DENSITY + 0.5);
+        if (count > MAX_PULSES)
+            count = MAX_PULSES;
+        double grid = (double)length / count, energy = 0.0;
+        for (int pulse = 0; pulse < count; pulse++) {
+            seed = seed * 1103515245u + 12345u;
+            double jitter = ((seed >> 8) & 0xffff) / 65536.0;
+            seed = seed * 1103515245u + 12345u;
+            double sign = (seed >> 16) & 1 ? 1.0 : -1.0;
+            int at = (int)(pulse * grid + jitter * (grid - 1.0)) + 1;
+            double gain = sign * pow(10.0, VELVET_DECAY / 20.0 * pulse / count);
+            self->pulse_at[pulse] = at < MAX_WIDE_DELAY - 1 ? at : MAX_WIDE_DELAY - 1;
+            self->pulse_gain[pulse] = (float)gain;
+            energy += gain * gain;
+        }
+        for (int pulse = 0; pulse < count; pulse++)
+            self->pulse_gain[pulse] = (float)(self->pulse_gain[pulse] / sqrt(energy));
+        self->pulse_count = count;
+    }
+    self->fast_coef = 1.0 - exp(-1.0 / (self->rate * FAST_TIME));
+    self->slow_coef = 1.0 - exp(-1.0 / (self->rate * SLOW_TIME));
+    self->duck_coef = 1.0 - exp(-1.0 / (self->rate * DUCK_RELEASE));
+    self->fast_env = self->slow_env = 0.0;
+    self->duck = 1.0;
+    self->wide_mix = 0.0;
+    memset(self->delay, 0, sizeof(self->delay));
+    for (int index = 0; index < MAX_LOOKAHEAD; index++) {
+        self->wanted[index] = 1.0f;
+        self->held[index] = 1.0f;
+    }
+    self->held_sum = lookahead;
+    self->head = 0;
+    self->release = 1.0;
+}
+
+/* ------------------------------------------------------------ 소리 */
+
+static void process(AEffect *effect, float **inputs, float **outputs, int32_t frames)
+{
+    Leveler *self = (Leveler *)effect->object;
+    unsigned int mode = _MM_GET_FLUSH_ZERO_MODE();
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+
+    int agc = is_on(self->params[P_AGC]);
+    int limit = is_on(self->params[P_LIMITER]);
+    int stereo = is_on(self->params[P_STEREO]);
+    int bass_mono = is_on(self->params[P_BASS_MONO]);
+    double width = get_width(self);
+    int mono_wide = is_on(self->params[P_MONO_WIDE]);
+    /* 늦춘 갈래들은 서로 거의 무관해 합의 크기가 √갈래수 배다. 그만큼 나눠 M 과 같은 크기로. */
+    double wide_target = pow(10.0, get_wide_amount(self) / 10.0);  /* 목표 S/M 에너지 비 */
+
+    double target = get_target(self);
+    double max_gain = get_max_gain(self);
+    double ceiling = pow(10.0, get_ceiling(self) / 20.0);
+    double time = get_speed_time(self->params[P_SPEED]);
+    /* 올릴 때는 정한 빠르기, 내릴 때는 세 배 빠르게 — 갑자기 커지는 소리를 오래 두지 않는다. */
+    double up = 1.0 - exp(-1.0 / (self->rate * time));
+    double down = 1.0 - exp(-3.0 / (self->rate * time));
+    int lookahead = self->lookahead;
+    double deepest = 1.0;  /* 이 블록에서 리미터가 건 가장 작은 이득 */
+    int any_sound = 0;
+
+    for (int32_t n = 0; n < frames; n++) {
+        double left = inputs[0][n];
+        double right = inputs[1][n];
+
+        /* AGC: 이득 걸기 전 소리를 잰다. */
+        double kl = run_biquad(&self->highpass, 0, run_biquad(&self->shelf, 0, left));
+        double kr = run_biquad(&self->highpass, 1, run_biquad(&self->shelf, 1, right));
+        double energy = kl * kl + kr * kr;
+        self->momentary += (energy - self->momentary) * self->momentary_coef;
+        double short_term = -0.691 + 10.0 * log10(self->momentary + 1e-20);
+        double long_term = -0.691 + 10.0 * log10(self->power + 1e-20);
+        int sounding = short_term > GATE_LUFS;
+        double pace = (self->power <= 0.0 || short_term > long_term - RELATIVE_GATE) ?
+                      1.0 : RELATIVE_SLOW;
+        if (sounding)
+            self->power += (energy - self->power) * self->power_coef * pace;
+        if (agc) {
+            double loudness = -0.691 + 10.0 * log10(self->power + 1e-20);
+            if (sounding && loudness > GATE_LUFS) {
+                double wanted = target - loudness;
+                if (wanted > max_gain)
+                    wanted = max_gain;
+                if (wanted < MIN_GAIN)
+                    wanted = MIN_GAIN;
+                self->gain_db += (wanted - self->gain_db) *
+                                 (wanted > self->gain_db ? up : down) * pace;
+            }
+        } else {
+            self->gain_db += (0.0 - self->gain_db) * down;
+        }
+        double gain = pow(10.0, self->gain_db / 20.0);
+        left *= gain;
+        right *= gain;
+
+        /* 스테레오 보정: 재는 것은 K 가중 입력(이득 앞), 거는 것은 이득 뒤 소리. */
+        if (sounding) {
+            double mid = (kl + kr) * 0.5, side = (kl - kr) * 0.5;
+            double c = self->stereo_coef * pace;
+            self->left_power += (kl * kl - self->left_power) * c;
+            self->right_power += (kr * kr - self->right_power) * c;
+            self->mid_power += (mid * mid - self->mid_power) * c;
+            self->side_power += (side * side - self->side_power) * c;
+        }
+        /* 모노 판정용 띠: 이득 앞 입력의 M·S 를 300 Hz–4 kHz 로 거른다. */
+        {
+            double raw_mid = (inputs[0][n] + inputs[1][n]) * 0.5;
+            double raw_side = (inputs[0][n] - inputs[1][n]) * 0.5;
+            double band_mid = run_biquad(&self->detect_low, 0, run_biquad(&self->detect_high, 0, raw_mid));
+            double band_side = run_biquad(&self->detect_low, 1, run_biquad(&self->detect_high, 1, raw_side));
+            if (sounding) {
+                double c = self->stereo_coef * pace;
+                self->detect_mid += (band_mid * band_mid - self->detect_mid) * c;
+                self->detect_side += (band_side * band_side - self->detect_side) * c;
+            }
+        }
+        double want_balance = 0.0, want_side = 0.0;
+        if (stereo && self->left_power > 1e-12 && self->right_power > 1e-12) {
+            want_balance = clamp(10.0 * log10(self->left_power / self->right_power),
+                                 -BALANCE_LIMIT, BALANCE_LIMIT);
+            double ratio = 10.0 * log10((self->side_power + 1e-20) / (self->mid_power + 1e-20));
+            if (ratio > MONO_SOURCE)
+                want_side = clamp(width - ratio, -SIDE_LIMIT, 0.0);
+        }
+        if (sounding || !stereo) {
+            double f = self->follow_coef * (sounding ? pace : 1.0);
+            self->balance_db += (want_balance - self->balance_db) * f;
+            self->side_db += (want_side - self->side_db) * f;
+        }
+        /* 모노 넓히기: 목표 S 에너지에서 지금 있는 S 를 뺀 만큼만 가짜 S 로 채운다. */
+        double want_mix = 0.0;
+        if (mono_wide && self->detect_mid > 1e-14) {
+            double have = self->detect_side / self->detect_mid;
+            want_mix = have < wide_target ? sqrt(wide_target - have) : 0.0;
+        }
+        if (sounding || !mono_wide)
+            self->wide_mix += (want_mix - self->wide_mix) *
+                              self->follow_coef * (sounding ? pace : 1.0);
+        if (stereo || bass_mono || self->wide_mix > 1e-4) {
+            left *= pow(10.0, -self->balance_db / 40.0);
+            right *= pow(10.0, self->balance_db / 40.0);
+            double mid = (left + right) * 0.5;
+            double side = (left - right) * 0.5 * pow(10.0, self->side_db / 20.0);
+            /* 가짜 S: M 을 늦춘 갈래들의 부호 섞은 합, 300 Hz 위만. */
+            int head = self->wide_head;
+            self->wide_delay[head] = (float)mid;
+            double made = 0.0;
+            for (int pulse = 0; pulse < self->pulse_count; pulse++) {
+                int at = head - self->pulse_at[pulse];
+                if (at < 0)
+                    at += MAX_WIDE_DELAY;
+                made += self->pulse_gain[pulse] * self->wide_delay[at];
+            }
+            self->wide_head = (head + 1) % MAX_WIDE_DELAY;
+            made = run_biquad(&self->wide_highpass, 0, made);
+            /* 타격음 지킴: 빠른 포락이 느린 포락을 크게 넘으면 가짜 S 를 곧바로 줄였다 천천히 푼다.
+             * 가짜 S 가 있는 150 Hz 위만 본다 — 킥의 낮은 쿵까지 보면 킥이 많은 곡은 늘 좁아졌다. */
+            double level = fabs(run_biquad(&self->wide_highpass, 1, mid));
+            self->fast_env += (level - self->fast_env) * self->fast_coef;
+            self->slow_env += (level - self->slow_env) * self->slow_coef;
+            if (self->fast_env > self->slow_env * TRANSIENT_RATIO + 1e-6)
+                self->duck = TRANSIENT_DUCK;
+            else
+                self->duck += (1.0 - self->duck) * self->duck_coef;
+            side += made * self->wide_mix * self->duck;
+            /* 저역 모노는 가짜 S 까지 더한 뒤에 — 150 Hz 고역 통과가 다 못 거른 낮은 S 도 걷는다. */
+            if (bass_mono)
+                side = run_biquad(&self->bass, 0, side);
+            left = mid + side;
+            right = mid - side;
+        } else {
+            /* 꺼져 있어도 지연선은 채워 둔다 — 켜는 순간 빈 소리가 섞이지 않게. */
+            self->wide_delay[self->wide_head] = (float)((left + right) * 0.5);
+            self->wide_head = (self->wide_head + 1) % MAX_WIDE_DELAY;
+        }
+
+        /* 리미터: 이 표본에 필요한 이득, 창 최솟값, 풀림, 상자 평균. */
+        double peak = fabs(left) > fabs(right) ? fabs(left) : fabs(right);
+        double need = (limit && peak > ceiling) ? ceiling / peak : 1.0;
+        int head = self->head;
+        self->wanted[head] = (float)need;
+        double minimum = need;
+        for (int index = 0; index < lookahead; index++) {
+            if (self->wanted[index] < minimum)
+                minimum = self->wanted[index];
+        }
+        if (minimum < self->release)
+            self->release = minimum;
+        else
+            self->release += (minimum - self->release) * self->release_coef;
+        self->held_sum += self->release - self->held[head];
+        self->held[head] = (float)self->release;
+        double smooth = self->held_sum / lookahead;
+        if (smooth > 1.0)
+            smooth = 1.0;
+        if (smooth < deepest)
+            deepest = smooth;
+        any_sound |= sounding;
+
+        /* 내다본 만큼 늦게 내보낸다. head 자리에는 lookahead - 1 표본 전 소리가 있다. */
+        int tail = (head + 1) % lookahead;
+        float out_left = self->delay[0][tail];
+        float out_right = self->delay[1][tail];
+        self->delay[0][head] = (float)left;
+        self->delay[1][head] = (float)right;
+        self->head = tail;
+        if (lookahead == 1) {
+            out_left = (float)left;
+            out_right = (float)right;
+        }
+        out_left *= (float)smooth;
+        out_right *= (float)smooth;
+        /* 상자 평균의 반올림 때문에 아주 조금 넘을 수 있다. 끝에서 한 번 더 막는다. */
+        if (limit) {
+            if (out_left > ceiling) out_left = (float)ceiling;
+            if (out_left < -ceiling) out_left = (float)-ceiling;
+            if (out_right > ceiling) out_right = (float)ceiling;
+            if (out_right < -ceiling) out_right = (float)-ceiling;
+        }
+        outputs[0][n] = out_left;
+        outputs[1][n] = out_right;
+    }
+    MeterSlot *slot = self->meter;
+    if (slot == NULL && frames > 0)
+        slot = self->meter = claim_slot(self);
+    if (slot != NULL) {
+        slot->agc_db = (float)self->gain_db;
+        slot->balance_db = (float)self->balance_db;
+        slot->side_db = (float)self->side_db;
+        slot->fill_db = self->wide_mix > 1e-6 ? (float)(20.0 * log10(self->wide_mix)) : -120.0f;
+        slot->limiter_db = (float)(20.0 * log10(deepest > 1e-6 ? deepest : 1e-6));
+        slot->loudness = (float)(-0.691 + 10.0 * log10(self->power + 1e-20));
+        slot->sounding = any_sound;
+        slot->tick = (LONG64)GetTickCount64();
+    }
+    _MM_SET_FLUSH_ZERO_MODE(mode);
+}
+
+/* ------------------------------------------------------------ 파라미터 읽고 쓰기 */
+
+static void set_parameter(AEffect *effect, int32_t index, float value)
+{
+    Leveler *self = (Leveler *)effect->object;
+    if (index < 0 || index >= PARAM_COUNT)
+        return;
+    if (value < 0.0f)
+        value = 0.0f;
+    if (value > 1.0f)
+        value = 1.0f;
+    if (index == P_AGC || index == P_STEREO || index == P_BASS_MONO || index == P_MONO_WIDE ||
+        index == P_LIMITER)
+        value = is_on(value) ? 1.0f : 0.0f;
+    self->params[index] = value;
+}
+
+static float get_parameter(AEffect *effect, int32_t index)
+{
+    Leveler *self = (Leveler *)effect->object;
+    if (index < 0 || index >= PARAM_COUNT)
+        return 0.0f;
+    return self->params[index];
+}
+
+static void copy_text(void *target, const char *text, size_t size)
+{
+    if (target == NULL)
+        return;
+    strncpy((char *)target, text, size - 1);
+    ((char *)target)[size - 1] = 0;
+}
+
+static void get_display(Leveler *self, int32_t index, char *text)
+{
+    switch (index) {
+    case P_AGC:
+    case P_STEREO:
+    case P_BASS_MONO:
+    case P_MONO_WIDE:
+    case P_LIMITER:
+        strcpy(text, is_on(self->params[index]) ? "ON" : "OFF");
+        break;
+    case P_TARGET:
+        sprintf(text, "%.1f", get_target(self));
+        break;
+    case P_MAX_GAIN:
+        sprintf(text, "%.1f", get_max_gain(self));
+        break;
+    case P_SPEED:
+        sprintf(text, "%.1f", get_speed_time(self->params[P_SPEED]));
+        break;
+    case P_WIDTH:
+        sprintf(text, "%.1f", get_width(self));
+        break;
+    case P_WIDE_AMOUNT:
+        sprintf(text, "%.1f", get_wide_amount(self));
+        break;
+    case P_CEILING:
+        sprintf(text, "%.1f", get_ceiling(self));
+        break;
+    default:
+        text[0] = 0;
+    }
+}
+
+static intptr_t dispatch(AEffect *effect, int32_t opcode, int32_t index, intptr_t value,
+                         void *pointer, float option)
+{
+    Leveler *self = (Leveler *)effect->object;
+    char text[64];
+    (void)value;
+    (void)option;
+    switch (opcode) {
+    case EFF_OPEN:
+        return 0;
+    case EFF_CLOSE:
+        if (self->meter != NULL) {
+            self->meter->tick = 0;
+            InterlockedExchange64(&self->meter->owner, 0);
+        }
+        free(self);
+        return 1;
+    case EFF_GET_PROGRAM:
+        return 0;
+    case EFF_GET_PROGRAM_NAME:
+        copy_text(pointer, "Default", 24);
+        return 1;
+    case EFF_GET_PARAM_LABEL:
+        if (index >= 0 && index < PARAM_COUNT)
+            copy_text(pointer, PARAM_LABELS[index], 8);
+        return 0;
+    case EFF_GET_PARAM_DISPLAY:
+        if (index >= 0 && index < PARAM_COUNT) {
+            get_display(self, index, text);
+            copy_text(pointer, text, 8);
+        }
+        return 0;
+    case EFF_GET_PARAM_NAME:
+        if (index >= 0 && index < PARAM_COUNT)
+            copy_text(pointer, PARAM_NAMES[index], 32);
+        return 0;
+    case EFF_SET_SAMPLE_RATE:
+        if (option > 0.0f) {
+            self->rate = option;
+            reset(self);
+        }
+        return 0;
+    case EFF_SET_BLOCK_SIZE:
+        return 0;
+    case EFF_MAINS_CHANGED:
+        if (value)
+            reset(self);
+        return 0;
+    case EFF_GET_PARAMETER_PROPERTIES:
+        if (index >= 0 && index < PARAM_COUNT && pointer != NULL) {
+            ParameterProperties *props = (ParameterProperties *)pointer;
+            int16_t category = PARAM_CATEGORIES[index];
+            int16_t count = 0;
+            memset(props, 0, sizeof(*props));
+            for (int other = 0; other < PARAM_COUNT; other++)
+                count += PARAM_CATEGORIES[other] == category;
+            copy_text(props->label, PARAM_NAMES[index], sizeof(props->label));
+            props->flags = PARAM_SUPPORTS_DISPLAY_CATEGORY;
+            if (index == P_AGC || index == P_STEREO || index == P_BASS_MONO ||
+                index == P_MONO_WIDE || index == P_LIMITER)
+                props->flags |= PARAM_IS_SWITCH;
+            props->category = category;
+            props->numParametersInCategory = count;
+            copy_text(props->categoryLabel, CATEGORY_LABELS[category], sizeof(props->categoryLabel));
+            return 1;
+        }
+        return 0;
+    case EFF_GET_PLUG_CATEGORY:
+        return CATEGORY_MASTERING;
+    case EFF_GET_EFFECT_NAME:
+        copy_text(pointer, "PyWinAudio Leveler", 32);
+        return 1;
+    case EFF_GET_PRODUCT_STRING:
+        copy_text(pointer, "PyWinAudio Leveler", 64);
+        return 1;
+    case EFF_GET_VENDOR_STRING:
+        copy_text(pointer, "PyWinAudio", 64);
+        return 1;
+    case EFF_GET_VENDOR_VERSION:
+        return VERSION;
+    case EFF_CAN_DO:
+        return 0;
+    case EFF_GET_VST_VERSION:
+        return 2400;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------ 들머리 */
+
+__declspec(dllexport) AEffect *VSTPluginMain(AudioMaster master)
+{
+    if (master == NULL || master(NULL, MASTER_VERSION, 0, 0, NULL, 0.0f) == 0)
+        return NULL;
+    Leveler *self = (Leveler *)calloc(1, sizeof(Leveler));
+    if (self == NULL)
+        return NULL;
+    self->master = master;
+    for (int index = 0; index < PARAM_COUNT; index++)
+        self->params[index] = PARAM_DEFAULTS[index];
+    self->rate = 48000.0;
+    AEffect *effect = &self->effect;
+    effect->magic = MAGIC;
+    effect->dispatcher = dispatch;
+    effect->process = process;
+    effect->setParameter = set_parameter;
+    effect->getParameter = get_parameter;
+    effect->numPrograms = 1;
+    effect->numParams = PARAM_COUNT;
+    effect->numInputs = 2;
+    effect->numOutputs = 2;
+    effect->flags = FLAG_CAN_REPLACING;
+    effect->ioRatio = 1.0f;
+    effect->object = self;
+    effect->uniqueID = UNIQUE_ID;
+    effect->version = VERSION;
+    effect->processReplacing = process;
+    reset(self);
+    return effect;
+}

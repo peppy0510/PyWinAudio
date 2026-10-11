@@ -42,6 +42,12 @@ from rackui import get_pen
 from rackui import get_short_hz
 from rackui import mix
 from rackui import draw_glyph
+from rackui import CHIP_GAP
+from rackui import CHIP_HEIGHT
+from rackui import CHIP_PAD
+from rackui import CHIP_TEXT
+from rackui import draw_chip
+from rackui import get_chip_width
 from units import EAR
 from units import FOLD
 from units import FOLDED
@@ -61,11 +67,9 @@ TOP = 0
 PARTS = ('level', 'spectrum')
 # 판 이름. OUTPUT 이라 하면 끄면 소리가 안 나갈 것처럼 읽혀(사용자) 재는 판임을 드러낸다.
 TITLE = 'Analyzer'
-PART_LABELS = {'level': 'LEVEL', 'spectrum': 'SPECTRUM'}
+# 'level' 구역에는 레벨·스코프·막대 띠·상관·균형이 다 있어 LEVEL 은 이름이 좁다(사용자).
+PART_LABELS = {'level': 'METERS', 'spectrum': 'SPECTRUM'}
 # LEVEL 구역: 왼쪽 정사각 벡터스코프, 오른쪽에 L·R / 눈금 / M·S·I / 상관·균형 줄(사용자).
-CHIP_HEIGHT = 18
-CHIP_PAD = 8
-CHIP_GAP = 4
 # 막대 띠는 낮게(사용자: 높으면 보기 싫다 → 40 은 작다 → 52 는 조금 크다 → 46). 위상도 110 → 96.
 # 두 구역 키는 같게(사용자).
 PART_BODIES = {'level': 118, 'spectrum': 118}
@@ -405,9 +409,9 @@ class MeterView(wx.Panel):
         event.Skip()
 
     def get_chip_width(self, text):
-        dc = wx.ScreenDC()
-        dc.SetFont(get_font(7, bold=True))
-        return dc.GetTextExtent(text)[0] + CHIP_PAD * 2
+        # Leveler 칩과 같은 GC 로 잰다. DC 로 재면 1 화소 어긋난다.
+        dc = wx.MemoryDC(wx.Bitmap(1, 1))
+        return get_chip_width(wx.GraphicsContext.Create(dc), text)
 
     def layout(self, width):
         '''이름 띠: 접기 · 켜기 · 제목 · 구역 토글 단추들 … 장치 이름 · PIN. 그 아래 화면 하나에
@@ -577,7 +581,7 @@ class MeterView(wx.Panel):
         self.draw_pin(gc, regions['pin'], accent)
         draw_title(gc, power.x + 22, plate.y, TITLE, '', RACK['dim'], plate.width // 2)
         for name, chip in regions['chips'].items():
-            self.draw_chip(gc, chip, PART_LABELS[name], not self.parts[name], accent)
+            draw_chip(gc, chip, PART_LABELS[name], not self.parts[name])
         if 'screen' in regions:
             draw_lcd(gc, regions['screen'])
             for divider in regions['dividers']:
@@ -603,16 +607,8 @@ class MeterView(wx.Panel):
             fill_rect(gc, accent, rect.x + 2 + index * 4, bottom - height, 2, height, 1)
 
     def draw_pin(self, gc, rect, accent):
-        self.draw_chip(gc, rect, 'PIN', self.pinned, accent)
+        draw_chip(gc, rect, 'PIN', self.pinned)
 
-    def draw_chip(self, gc, rect, text, lit, accent):
-        '''랙의 다른 단추와 같은 평평한 글씨 단추. 켜져 있으면 장치 색, 꺼져 있으면 테두리만.'''
-        fill = accent if lit else RACK['button']
-        gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
-        gc.SetBrush(wx.Brush(wx.Colour(fill)))
-        gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
-        draw_text(gc, text, rect.x + rect.width / 2, rect.y + 2.5, 7,
-                  '#101215' if lit else RACK['dim'], bold=True, align='center')
 
     def draw_level_ground(self, gc, regions):
         '''눈금 금과 글씨, 꺼진 칸, 이름, 숫자 칸 이름. 켜진 칸과 숫자만 매 장 얹는다.'''

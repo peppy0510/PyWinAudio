@@ -1,0 +1,4 @@
+LIBRARY PyWinAudioLeveler
+EXPORTS
+    VSTPluginMain
+    main=VSTPluginMain

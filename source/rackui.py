@@ -56,6 +56,7 @@ FACES = {
     'delay': ('#1d1f23', '#ff9a3d'),
     'stereo': ('#1d1f23', '#a894ff'),
     'vst': ('#1d1f23', '#ff9a3d'),
+    'leveler': ('#1d1f23', '#7fb8ff'),
     'custom': ('#1d1f23', '#8b8f96'),
 }
 
@@ -64,7 +65,8 @@ HEADER_BAND = 30
 TITLE_SIZE = 9
 KNOB_RADIUS = 14
 LABEL_HEIGHT = 11
-LABEL_GAP = 5
+# 이름 글씨와 값 호 사이. 5 는 너무 붙어 보였다(사용자).
+LABEL_GAP = 8
 KNOB_SWEEP = math.radians(270)
 KNOB_START = math.radians(135)
 DRAG_RANGE = 180.0
@@ -113,6 +115,20 @@ def fit_text(gc, text, limit):
     return text + '…'
 
 
+LABEL_SIZE = 7.5
+LABEL_SMALL = 6.5
+
+
+def fit_label(gc, text, limit):
+    '''손잡이 이름: 7.5 로 안 들어가면 6.5 로 줄여 보고, 그래도 넘치면 그때 자른다.
+    'WIDE AMOUNT', 'ISP DETECTION' 이 잘려 읽히지 않았다(사용자).'''
+    for size in (LABEL_SIZE, LABEL_SMALL):
+        set_font(gc, size, RACK['dim'])
+        if gc.GetTextExtent(text)[0] <= limit:
+            return text, size
+    return fit_text(gc, text, limit), LABEL_SMALL
+
+
 def fill_rect(gc, colour, x, y, width, height, radius=0):
     gc.SetPen(wx.TRANSPARENT_PEN)
     gc.SetBrush(wx.Brush(wx.Colour(colour)))
@@ -153,6 +169,30 @@ def draw_title(gc, left, y, title, subtitle, tone, limit):
         subtitle = fit_text(gc, subtitle, max(0, limit - width - 12))
         draw_text(gc, subtitle, left + width + 12, middle - 6, 8, tone, engraved=True)
     return width
+
+
+# 이름 띠의 구역 토글 칩(Analyzer 의 METERS·SPECTRUM, Leveler 의 METERS·CONTROLS). 모양은 여기 하나.
+CHIP_HEIGHT = 16
+CHIP_PAD = 6
+CHIP_GAP = 4
+CHIP_TEXT = 6.5
+CHIP_LIT = FACES['master'][1]
+
+
+def get_chip_width(gc, text):
+    set_font(gc, CHIP_TEXT, RACK['text'], bold=True)
+    return int(math.ceil(gc.GetTextExtent(text.upper())[0])) + CHIP_PAD * 2
+
+
+def draw_chip(gc, rect, text, lit):
+    '''평평한 글씨 칩. 켜져 있으면 CHIP_LIT, 꺼져 있으면 테두리만. 판 색을 따르지 않는다 —
+    Analyzer·Leveler 칩 색이 달라 보였다(사용자).'''
+    fill = CHIP_LIT if lit else RACK['button']
+    gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
+    gc.SetBrush(wx.Brush(wx.Colour(fill)))
+    gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
+    draw_text(gc, text.upper(), rect.x + rect.width / 2, rect.y + rect.height / 2 - 5.5, CHIP_TEXT,
+              '#101215' if lit else RACK['dim'], bold=True, align='center')
 
 
 def draw_led(gc, cx, cy, on, colour, radius=5.5):
@@ -313,7 +353,9 @@ class Knob(Control):
         track = radius + 3
         reach = track + 1.5
         set_font(gc, 7.5, RACK['dim'])
-        reach = max(reach, gc.GetTextExtent(fit_text(gc, self.label, width - 2))[0] / 2)
+        label, size = fit_label(gc, self.label, width - 2)
+        set_font(gc, size, RACK['dim'])
+        reach = max(reach, gc.GetTextExtent(label)[0] / 2)
         if self.ends:
             set_font(gc, 6, RACK['faint'])
             reach = max(reach, -math.cos(KNOB_START) * (track + 2) + 1 +
@@ -325,9 +367,9 @@ class Knob(Control):
         cx = rect.x + rect.width / 2
         radius = min(rect.width / 2 - 4, KNOB_RADIUS)
         # 플러그인 파라미터 이름은 길이를 플러그인이 정한다. 옆 손잡이에 닿기 전에 자른다.
-        set_font(gc, 7.5, RACK['dim'])
-        label = fit_text(gc, self.label, rect.width - 2)
-        draw_text(gc, label, cx, rect.y, 7.5, RACK['dim'], align='center', engraved=True)
+        label, size = fit_label(gc, self.label, rect.width - 2)
+        draw_text(gc, label, cx, rect.y + (LABEL_SIZE - size), size, RACK['dim'], align='center',
+                  engraved=True)
         # 이름 글씨 아래로 값 호의 바깥 끝까지 LABEL_GAP 을 띄운다. 호는 반지름 + 3 에 3 화소 굵기.
         cy = rect.y + LABEL_HEIGHT + LABEL_GAP + radius + 4.5
 
@@ -390,7 +432,9 @@ class Switch(Control):
 
     def get_reach(self, gc, width):
         set_font(gc, 7.5, RACK['dim'])
-        label = gc.GetTextExtent(fit_text(gc, self.label, width - 2))[0] / 2
+        text, size = fit_label(gc, self.label, width - 2)
+        set_font(gc, size, RACK['dim'])
+        label = gc.GetTextExtent(text)[0] / 2
         return max(label, self.WIDTH / 2)
 
     def get_button(self):
@@ -410,9 +454,8 @@ class Switch(Control):
     def draw(self, gc, accent):
         rect = self.rect
         cx = rect.x + rect.width / 2
-        set_font(gc, 7.5, RACK['dim'])
-        label = fit_text(gc, self.label, rect.width - 2)
-        draw_text(gc, label, cx, rect.y, 7.5, RACK['dim'], align='center')
+        label, size = fit_label(gc, self.label, rect.width - 2)
+        draw_text(gc, label, cx, rect.y + (LABEL_SIZE - size), size, RACK['dim'], align='center')
         button = self.get_button()
         on = self.is_on() and self.enabled
         lit = self.hovered or self.pressed
@@ -563,6 +606,30 @@ class Button(Control):
                     rect.y + (rect.height - height) / 2)
 
 
+class Chip(Control):
+    '''이름 띠의 구역 토글. 누르면 action, active() 가 참이면 켜진 모양.'''
+
+    def __init__(self, caption, action, active, tip=''):
+        super().__init__()
+        self.caption = caption
+        self.action = action
+        self.active = active
+        self.tip = tip
+
+    # Analyzer 의 칩과 같은 손맛: 누르는 순간 바뀌고, 빨리 두 번 눌러도 한 번(사용자: 일관성).
+    def on_down(self, point, shift):
+        self.action()
+
+    def on_up(self, point):
+        self.pressed = False
+
+    def on_dclick(self, point):
+        pass
+
+    def draw(self, gc, accent):
+        draw_chip(gc, self.rect, self.caption, self.active())
+
+
 class IconButton(Button):
     '''장치 오른쪽 끝의 작은 단추. 위·아래로 옮기기와 빼기.'''
 
@@ -588,7 +655,8 @@ class IconButton(Button):
             fill_rect(gc, fill, rect.x, rect.y, rect.width, rect.height, 3)
         colour = '#101215' if asking else (RACK['text'] if self.hovered else RACK['dim'])
         if not self.enabled:
-            colour = RACK['faint']
+            # 더 갈 수 없는 쪽: 꺼진 불과 같은 어두운 회색.
+            colour = RACK['led_off']
         draw_glyph(gc, self.glyph, rect.x + rect.width / 2, rect.y + rect.height / 2, 10,
                    colour)
 

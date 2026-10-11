@@ -15,6 +15,7 @@ email: peppy0510@hotmail.com
 
 import dsp
 import eapo
+import math
 import os
 import threading
 import time
@@ -124,25 +125,44 @@ class AddSlot:
     def __init__(self, rack):
         self.rack = rack
         self.rect = wx.Rect()
-        self.buttons = [Button(TITLES[kind] if kind != 'vst' else 'VST plugin…',
-                               lambda kind=kind: rack.add(kind)) for kind in ADDABLE]
+        # 기본 장치는 메뉴 단추 하나로 묶고, VST 는 따로(사용자: 단추가 자리를 많이 차지한다).
+        self.builtin = Button('Built-in  \u25be', self.on_builtin)
+        self.buttons = [self.builtin, Button('VST plugin…', lambda: rack.add('vst'))]
+
+    def on_builtin(self):
+        menu = wx.Menu()
+        for kind in ADDABLE:
+            if kind == 'vst':
+                continue
+            item = menu.Append(wx.ID_ANY, TITLES[kind])
+            self.rack.Bind(wx.EVT_MENU, lambda event, kind=kind: self.rack.add(kind), item)
+        rect = self.builtin.rect
+        self.rack.PopupMenu(menu, wx.Point(rect.x, rect.y + rect.height - self.rack.offset))
+        menu.Destroy()
 
     def get_controls(self):
         return self.buttons
 
+    LABEL = 'ADD A DEVICE'
+    LABEL_SIZE = 8.5
+    # 이름표와 단추를 한 줄에(사용자). 좁아서 안 들어가면 단추가 다음 줄로 내려간다.
+    MARGIN = 8
+
     def layout(self, gc, rect):
-        self.rect = rect
         left = rect.x + EAR + INSET
         right = rect.x + rect.width - EAR - INSET
-        x, y = left, rect.y + 30
+        set_font(gc, self.LABEL_SIZE, RACK['dim'], bold=True)
+        label = int(math.ceil(gc.GetTextExtent(self.LABEL)[0]))
+        top = rect.y + self.MARGIN
+        x, y = left + label + 12, top
         for button in self.buttons:
             width = button.get_width(gc)
             if x + width > right and x > left:
                 x, y = left, y + Button.HEIGHT + 6
             button.rect = wx.Rect(x, y, width, Button.HEIGHT)
             x += width + 6
-        # 단추가 몇 줄로 접히는지는 폭이 정한다. 접힌 만큼 칸이 자란다.
-        self.height = max(U + 30, y + Button.HEIGHT + 12 - rect.y)
+        self.label_y = top + Button.HEIGHT / 2 - 6
+        self.height = y + Button.HEIGHT + self.MARGIN - rect.y
         self.rect = wx.Rect(rect.x, rect.y, rect.width, self.height)
 
     def draw(self, gc):
@@ -153,8 +173,8 @@ class AddSlot:
         gc.SetBrush(wx.TRANSPARENT_BRUSH)
         gc.DrawRoundedRectangle(inner.x + 0.5, inner.y + 0.5, inner.width - 1,
                                 inner.height - 1, 4)
-        draw_text(gc, 'ADD A DEVICE', rect.x + EAR + INSET, rect.y + 9, 8.5, RACK['dim'],
-                  bold=True)
+        draw_text(gc, self.LABEL, rect.x + EAR + INSET, self.label_y, self.LABEL_SIZE,
+                  RACK['dim'], bold=True)
         for button in self.buttons:
             button.draw(gc, FACES['master'][1])
 
@@ -250,7 +270,9 @@ class RackView(Canvas):
         self.confirm = None
         self.meter_boxes = []
         # 핀을 뺀 Analyzer 판이 랙 맨 위에 차지하는 자리. 판은 따로 된 창이라 랙은 자리만 비운다.
-        self.top_space = 0
+        # 핀을 뺀 Analyzer 판이 앉을 자리. 신호 흐름대로 맨 아래(ADD 다음)에 비워 둔다(사용자).
+        self.bottom_space = 0
+        self.meters_y = 0
         self.on_scroll = None
         self.notified = None
         self.scrolled_at = 0.0
@@ -343,12 +365,17 @@ class RackView(Canvas):
     def add(self, kind):
         self.cancel_remove()
         unit = build_unit(make_unit(kind), self)
-        self.units.append(unit)
-        # 고르다 그만두면 빈 칸을 남기지 않는다. 골랐는데 못 올렸으면 남겨 두어 까닭을 보인다.
-        if kind == 'vst' and not unit.on_choose():
-            self.units.remove(unit)
-            self.Refresh()
+        # VST 는 파일을 고른 뒤에야 칸을 꽂는다. 먼저 꽂으면 고르는 동안 빈 판이 랙에 보였다(사용자).
+        # 그만두면 아무것도 남지 않고, 골랐는데 못 올렸으면 남겨 두어 까닭을 보인다.
+        path = unit.pick_path() if kind == 'vst' else None
+        if kind == 'vst' and path is None:
             return
+        self.units.append(unit)
+        if path is not None:
+            unit.load(path)
+        # Leveler 는 깔린 자리에서 바로 올린다. 깔려 있지 않으면 판에 까닭이 뜬다.
+        if kind == 'leveler' and os.path.exists(unit.data['path']):
+            unit.load(unit.data['path'])
         self.on_unit_change()
         wx.CallAfter(self.reveal, unit)
 
@@ -403,7 +430,20 @@ class RackView(Canvas):
         now = time.perf_counter()
         elapsed = min(0.2, now - self.last_tick)
         self.last_tick = now
-        if self.mixer.folded or not self.IsShownOnScreen():
+        if not self.IsShownOnScreen():
+            return
+        # Leveler 의 보정 계기는 세 번에 한 번(약 10 Hz)만 다시 칠한다.
+        self.meter_ticks = getattr(self, 'meter_ticks', 0) + 1
+        if self.meter_ticks % 3 == 0:
+            room = self.get_room()
+            for unit in self.units:
+                rect = getattr(unit, 'meter_rect', None)
+                if rect is None or unit.folded or not unit.update_meters(elapsed * 3):
+                    continue
+                box = wx.Rect(rect.x, rect.y - self.offset, rect.width, rect.height)
+                if box.y + box.height >= 0 and box.y <= room:
+                    self.RefreshRect(box.Inflate(2, 2), False)
+        if self.mixer.folded:
             return
         changed = self.mixer.update_levels(elapsed, MIXER_FALL)
         # 판 전체가 아니라 켜진 칸 수가 바뀐 레벨 막대 자리만 다시 칠하게 한다. on_paint 가
@@ -431,7 +471,9 @@ class RackView(Canvas):
     # ------------------------------------------------------------ 자리
 
     def get_blocks(self):
-        return [self.master, self.mixer] + self.units + [self.slot]
+        # 신호 흐름 순: 앱 볼륨(Mixer) → 체인 전원 띠 → 장치들 → ADD(사용자). 전원 띠가 Mixer 위에
+        # 있으면 Mixer 까지 끄는 것처럼 보였다.
+        return [self.mixer, self.master] + self.units + [self.slot]
 
     def get_controls(self):
         # 묻는 동안 그 장치의 손잡이는 덮개 아래에 있다. 덮개 단추만 받는다.
@@ -445,14 +487,15 @@ class RackView(Canvas):
                 yield control
 
     def layout(self, gc, width):
-        # 위의 Analyzer 판과는 장치 사이와 같은 간격만 둔다. 레일만 보이는 틈을 남기지 않는다.
-        y = self.top_space + GAP
+        y = GAP
         inner = width - MARGIN * 2
         for block in self.get_blocks():
             height = block.get_height(inner) if hasattr(block, 'get_height') else block.height
             block.layout(gc, wx.Rect(MARGIN, y, inner, height))
             y += block.rect.height + GAP
-        self.total = y + MARGIN
+        # 아래 Analyzer 판과는 장치 사이와 같은 간격만 둔다. 레일만 보이는 틈을 남기지 않는다.
+        self.meters_y = y
+        self.total = y + self.bottom_space + (GAP if self.bottom_space else 0) + MARGIN
         if self.confirm is not None:
             self.confirm.layout(gc)
         for control in self.get_controls():
@@ -480,8 +523,9 @@ class RackView(Canvas):
         rack_width = width
         self.layout(gc, rack_width)
         self.clamp()
-        if self.on_scroll is not None and self.notified != self.offset:
-            self.notified = self.offset
+        # 굴렀거나 장치가 늘고 줄어 아래 Analyzer 자리가 바뀌면 판을 옮기게 알린다.
+        if self.on_scroll is not None and self.notified != (self.offset, self.meters_y):
+            self.notified = (self.offset, self.meters_y)
             wx.CallAfter(self.on_scroll)
         fill_rect(gc, RACK['bg'], 0, 0, width, height)
         gc.PushState()

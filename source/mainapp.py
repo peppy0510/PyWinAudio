@@ -128,7 +128,8 @@ class MainFrame(wx.Frame):
 
     def place_rackpage(self):
         width, height = self.rackpage.GetClientSize()
-        # 계기판은 창이 넓어도 늘 랙 위에 둔다. 오른쪽 기둥(2단)은 사용자가 원치 않는다.
+        # 핀을 꽂으면 계기판은 랙 위에 고정, 빼면 랙 맨 아래(ADD 다음)에 함께 구른다. 오른쪽
+        # 기둥(2단)은 사용자가 원치 않는다.
         meters = self.meters
         # 핀을 빼면 판이 랙 위에 겹친다. 오른쪽 여백은 비워 랙 스크롤바가 판 뒤에 숨지 않게.
         meters.right_margin = MARGIN if meters.pinned else 0
@@ -136,22 +137,22 @@ class MainFrame(wx.Frame):
         meter_height = meters.get_height(meters_width)
         meters.SetMinSize(wx.Size(-1, meter_height))
         if meters.pinned:
-            self.rack.top_space = 0
+            self.rack.bottom_space = 0
             self.rack.SetSize(0, meter_height, width, max(1, height - meter_height))
             meters.SetSize(0, 0, meters_width, meter_height)
         else:
-            self.rack.top_space = meter_height
+            self.rack.bottom_space = meter_height
             self.rack.SetSize(0, 0, width, height)
-            meters.SetSize(0, -self.rack.offset, meters_width, meter_height)
+            meters.SetSize(0, self.rack.meters_y - self.rack.offset, meters_width, meter_height)
         self.meters.Raise()
         self.rack.clamp()
         self.rack.Refresh()
 
     def place_meters(self):
-        '''랙이 굴러갈 때마다 핀을 뺀 판을 그만큼 올린다.'''
+        '''랙이 굴러가거나 장치 수가 바뀔 때마다 핀을 뺀 판을 랙 맨 아래 자리로 옮긴다.'''
         if self.meters.pinned or not self.rack:
             return
-        y = -self.rack.offset
+        y = self.rack.meters_y - self.rack.offset
         if self.meters.GetPosition().y != y:
             self.meters.SetPosition(wx.Point(0, y))
 

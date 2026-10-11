@@ -39,6 +39,10 @@ EFF_SET_CHUNK = 24
 EFF_GET_EFFECT_NAME = 45
 EFF_GET_VENDOR_STRING = 47
 EFF_GET_PRODUCT_STRING = 48
+EFF_GET_PARAMETER_PROPERTIES = 56
+
+PARAM_IS_SWITCH = 1 << 0
+PARAM_SUPPORTS_DISPLAY_CATEGORY = 1 << 5
 
 FLAG_HAS_EDITOR = 1 << 0
 FLAG_PROGRAM_CHUNKS = 1 << 5
@@ -105,6 +109,18 @@ AEffect._fields_ = [
     ('processDoubleReplacing', ctypes.c_void_p),
     ('future', ctypes.c_char * 56),
 ]
+
+
+class ParameterProperties(ctypes.Structure):
+    '''VST2 의 VstParameterProperties. 묶음(구역)과 켜고 끄는 값을 알려 주는 플러그인이 있다.'''
+    _fields_ = [('stepFloat', ctypes.c_float), ('smallStepFloat', ctypes.c_float),
+                ('largeStepFloat', ctypes.c_float), ('label', ctypes.c_char * 64),
+                ('flags', ctypes.c_int32), ('minInteger', ctypes.c_int32),
+                ('maxInteger', ctypes.c_int32), ('stepInteger', ctypes.c_int32),
+                ('largeStepInteger', ctypes.c_int32), ('shortLabel', ctypes.c_char * 8),
+                ('displayIndex', ctypes.c_int16), ('category', ctypes.c_int16),
+                ('numParametersInCategory', ctypes.c_int16), ('reserved', ctypes.c_int16),
+                ('categoryLabel', ctypes.c_char * 24), ('future', ctypes.c_char * 16)]
 
 
 class ERect(ctypes.Structure):
@@ -250,6 +266,18 @@ class Plugin:
 
     def get_display(self, index):
         return self.get_text(EFF_GET_PARAM_DISPLAY, index)
+
+    def get_properties(self, index):
+        '''(구역 번호, 켜고 끄는 값인지). 알려 주지 않는 플러그인이면 (0, None).'''
+        props = ParameterProperties()
+        try:
+            if not self.call(EFF_GET_PARAMETER_PROPERTIES, index, 0,
+                             ctypes.cast(ctypes.byref(props), ctypes.c_void_p)):
+                return 0, None
+        except Exception:
+            return 0, None
+        category = props.category if props.flags & PARAM_SUPPORTS_DISPLAY_CATEGORY else 0
+        return int(category), bool(props.flags & PARAM_IS_SWITCH)
 
     def get_label(self, index):
         return self.get_text(EFF_GET_PARAM_LABEL, index)

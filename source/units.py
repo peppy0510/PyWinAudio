@@ -24,6 +24,11 @@ from rackui import FACES
 from rackui import HEADER_BAND
 from rackui import RACK
 from rackui import Button
+from rackui import CHIP_GAP
+from rackui import CHIP_HEIGHT
+from rackui import Chip
+from rackui import TITLE_SIZE
+from rackui import get_chip_width
 from rackui import Control
 from rackui import Fader
 from rackui import IconButton
@@ -61,7 +66,7 @@ BOTTOM = PAD
 # 믹서와 Analyzer 판은 칸·화면이 촘촘한 판이라 안쪽 여백을 더 작게(사용자).
 TIGHT_PAD = 8
 # 손잡이 한 줄의 보이는 키. 손잡이 칸(64)은 글씨 위아래 여유를 품고 있어 보이는 것은 이만큼.
-KNOB_ROW = 59
+KNOB_ROW = 62
 # 손잡이 칸 맨 위에서 이름 글씨가 보이기 시작하는 곳까지.
 KNOB_TOP = 4
 
@@ -71,11 +76,15 @@ TITLES = {
     'graphic': 'Graphic EQ',
     'delay': 'Delay',
     'stereo': 'Stereo',
+    'leveler': 'Leveler',
     'vst': 'VST plugin',
     'custom': 'Custom lines',
 }
 
-ADDABLE = ('preamp', 'parametric', 'graphic', 'delay', 'stereo', 'vst')
+ADDABLE = ('preamp', 'parametric', 'graphic', 'delay', 'stereo', 'leveler', 'vst')
+# PyWinAudio 의 자체 플러그인. 엔진(audiodg)이 읽을 수 있는 곳에 깔아 둔다(plugin/install.ps1).
+LEVELER_PATH = r'C:\Program Files\VSTPlugIns\PyWinAudio\PyWinAudioLeveler.dll'
+LEVELER_FILE = 'pywinaudioleveler.dll'
 
 BAND_TYPES = (('PK', 'Peak'), ('LSC', 'Low shelf'), ('HSC', 'High shelf'),
               ('HPQ', 'Low cut'), ('LPQ', 'High cut'))
@@ -107,6 +116,10 @@ def make_unit(kind):
     if kind == 'vst':
         return {'kind': kind, 'on': True, 'path': '', 'params': [], 'display': [],
                 'chunk': None}
+    if kind == 'leveler':
+        # 엔진에는 보통 VST 줄로 나간다. 랙에서만 기본 장치처럼 보인다.
+        return {'kind': 'vst', 'on': True, 'path': LEVELER_PATH, 'params': [], 'display': [],
+                'chunk': None, 'name': 'PyWinAudio Leveler', 'vendor': 'PyWinAudio'}
     return {'kind': 'custom', 'on': True, 'lines': []}
 
 
@@ -174,6 +187,12 @@ class Unit:
         '''이름 띠는 접었을 때와 펼쳤을 때가 같은 자리다. 접기·불·제목·부제·옮기기 단추가
         모두 띠 가운데 줄에 선다. 펼치면 그 아래에 본체가 붙을 뿐이다.'''
         self.rect = rect
+        # 맨 위 장치는 더 못 올리고, 맨 아래는 더 못 내린다 — 그 단추는 흐리게, 누르지 못하게(사용자).
+        units = getattr(self.rack, 'units', [])
+        if self in units:
+            index = units.index(self)
+            self.up.enabled = index > 0
+            self.down.enabled = index < len(units) - 1
         left, right = rect.x + EAR + INSET, rect.x + rect.width - EAR - INSET + 2
         middle = rect.y + FOLDED // 2
         self.fold.glyph = 'right' if self.folded else 'down'
@@ -233,7 +252,7 @@ def place_knobs(knobs, area, width=58, gc=None):
     if gc is not None and knobs:
         x -= max(0, int(width / 2 - knobs[0].get_reach(gc, width)))
     for knob in knobs:
-        knob.rect = wx.Rect(x, area.y + (area.height - KNOB_ROW) // 2 - KNOB_TOP, width, 64)
+        knob.rect = wx.Rect(x, area.y + (area.height - KNOB_ROW) // 2 - KNOB_TOP, width, KNOB_ROW + KNOB_TOP + 2)
         x += width + 4
     return x
 
@@ -441,7 +460,8 @@ class ParametricUnit(Unit):
     # 이보다 좁으면 화면을 위에, 밴드 조작부를 그 아래에 둔다.
     SIDE_BY_SIDE = 600
     SCREEN_HEIGHT = 136
-    PANEL_HEIGHT = 134
+    # 손잡이 이름과 호 사이를 넓힌 만큼(3) 더 — 실측 아래 여백 14.
+    PANEL_HEIGHT = 138
 
     def build(self):
         self.screen = EqScreen(self)
@@ -748,13 +768,51 @@ class VstUnit(Unit):
     '''플러그인은 손을 댈 때에야 이 프로세스에 올린다. 그 전에는 저장해 둔 이름과
     값으로 그린다 — 앱을 켤 때마다 남의 DLL 을 모두 올릴 까닭이 없다.'''
 
-    KNOB = 58
+    # 손잡이 칸. 'WIDE AMOUNT' 같은 이름이 잘리지 않을 만큼. 칸이 모자라면 줄을 바꿔 판이
+    # 아래로 길어진다(사용자: 좁은 화면에서 줄바꿈).
+    KNOB = 68
+    KNOB_GAP = 4
+    # 줄 사이: 12 + 가로 금 1 + 12 (사용자: 여백 좀 더).
+    RULE_GAP = 12
+    ROW_GAP = RULE_GAP * 2 + 1
+    # Edit·Choose 단추 기둥의 폭. 키를 셀 때(gc 없음)와 놓을 때가 같은 값을 써야 줄 수가 맞는다.
+    BUTTONS = 76
+    # 플러그인이 알려 준 구역 사이의 틈. 가운데에 세로 금 하나.
+    SEPARATOR = 21
+    # PyWinAudio Leveler 의 보정 계기 줄(이름·값 한 줄 + 막대).
+    METER_ROW = 26
+    METER_CELL = 112
+    METER_GAP = 16
+    METERS = (('agc', 'AGC', -12.0, 18.0, True), ('balance', 'BALANCE', -6.0, 6.0, True),
+              ('side', 'WIDTH CUT', -6.0, 0.0, False), ('fill', 'MONO FILL', -30.0, 0.0, False),
+              ('limiter', 'LIMITER', -12.0, 0.0, False))
+    LIMITER_FALL = 12.0
+    meter_values = None
+    meter_rect = None
 
     plugin = None
     editor = None
+    notice = ''
+    notice_timer = None
+    NOTICE_TIME = 4000
+
+    def show_notice(self, text):
+        self.notice = text
+        if self.notice_timer is not None and self.notice_timer.IsRunning():
+            self.notice_timer.Stop()
+        self.notice_timer = wx.CallLater(self.NOTICE_TIME, self.clear_notice)
+
+    def clear_notice(self):
+        self.notice = ''
+        if self.rack:
+            self.rack.Refresh()
 
     def build(self):
         '''이름이 바뀌면 손잡이를 다시 만든다. 올려 둔 플러그인과 편집기는 그대로 둔다.'''
+        # 예전에는 이 알림을 잘못으로 저장해 두어 사라지지 않았다. 남아 있으면 걷는다.
+        if self.data.get('error') == 'This plugin has no editor of its own':
+            self.data.pop('error')
+            self.data['has_editor'] = False
         self.edit = Button('Edit', self.on_edit)
         self.choose = Button('Choose…', self.on_choose)
         self.knobs = []
@@ -776,11 +834,21 @@ class VstUnit(Unit):
         self.extras = [self.edit, self.choose]
 
     def get_body_controls(self):
-        return self.extras + self.visible
+        return self.extras + (self.visible if self.shows_controls() else [])
+
+    def shows_meters(self):
+        return self.is_leveler() and self.data.get('show_meters', True)
+
+    def shows_controls(self):
+        return not self.is_leveler() or self.data.get('show_controls', True)
 
     def is_switch(self, index):
         '''VST2 의 파라미터는 모두 0~1 실수라 켜고 끄는 값을 따로 알려 주지 않는다. 플러그인이
         보여 주는 글씨가 ON·OFF 류면 켜고 끄는 단추로 본다.'''
+        # 플러그인이 직접 알려 주면(VstParameterProperties 의 IsSwitch) 그것을 믿는다.
+        switches = self.data.get('switches') or []
+        if index < len(switches) and switches[index] is not None:
+            return bool(switches[index])
         display = self.data.get('display') or []
         text = display[index].strip().upper() if index < len(display) else ''
         return text in SWITCH_WORDS
@@ -797,6 +865,8 @@ class VstUnit(Unit):
     def get_subtitle(self):
         if self.data.get('error'):
             return self.data['error']
+        if self.notice:
+            return self.notice
         if not self.data.get('path'):
             return 'Choose a plugin file'
         if not os.path.exists(self.data['path']):
@@ -805,7 +875,7 @@ class VstUnit(Unit):
 
     def get_subtitle_tone(self):
         path = self.data.get('path')
-        if self.data.get('error') or (path and not os.path.exists(path)):
+        if self.data.get('error') or self.notice or (path and not os.path.exists(path)):
             return RACK['warn']
         return RACK['dim']
 
@@ -855,6 +925,10 @@ class VstUnit(Unit):
                   for index in range(plugin.count)]
         display = ['%s %s' % (plugin.get_display(index), plugin.get_label(index))
                    for index in range(plugin.count)]
+        properties = [plugin.get_properties(index) for index in range(plugin.count)]
+        self.data['has_editor'] = plugin.has_editor
+        self.data['groups'] = [category for category, switch in properties]
+        self.data['switches'] = [switch for category, switch in properties]
         chunk = plugin.get_chunk() if plugin.uses_chunks else None
         changed = (params != self.data.get('params') or chunk != self.data.get('chunk'))
         names_changed = [p[0] for p in params] != [p[0] for p in self.data.get('params', ())]
@@ -876,6 +950,10 @@ class VstUnit(Unit):
             # Thresh 를 올리지 못한다) 다른 값을 함께 움직인다. 넣은 값을 믿지 말고 모두 다시
             # 읽어 손잡이·숫자를 플러그인에 맞춘다.
             self.read_state()
+            # 거절당하면 손잡이가 말없이 서 있어 고장처럼 보였다(사용자). 잠깐 까닭을 띄운다.
+            if abs(self.data['params'][index][1] - value) > 0.01:
+                self.show_notice('%s: held by the plugin (another setting limits it)' %
+                                 self.get_short_name(self.data['params'][index][0]))
         self.changed()
 
     def on_edit(self):
@@ -886,7 +964,9 @@ class VstUnit(Unit):
         if plugin is None:
             return
         if not plugin.has_editor:
-            self.data['error'] = 'This plugin has no editor of its own'
+            # 잘못이 아니라 알림이다. 잠깐 띄우고 사라진다(사용자). Edit 도 그 뒤로는 흐리게.
+            self.data['has_editor'] = False
+            self.show_notice('This plugin has no editor of its own')
             self.rack.Refresh()
             return
         from vsteditor import EditorFrame
@@ -903,14 +983,20 @@ class VstUnit(Unit):
         if self.read_state():
             self.changed()
 
-    def on_choose(self):
+    def pick_path(self):
+        '''고른 플러그인 파일 경로. 그만두면 None.'''
         start = os.path.dirname(self.data.get('path') or '') or self.rack.get_plugin_folder()
         with wx.FileDialog(self.rack, 'Choose a VST2 plugin', defaultDir=start,
                            wildcard='VST2 plugin (*.dll)|*.dll',
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
-                return False
-            path = dialog.GetPath()
+                return None
+            return dialog.GetPath()
+
+    def on_choose(self):
+        path = self.pick_path()
+        if path is None:
+            return False
         self.load(path)
         return True
 
@@ -940,26 +1026,183 @@ class VstUnit(Unit):
             self.plugin.close()
             self.plugin = None
 
+    def draw_meters(self, gc):
+        '''단계마다 지금 얼마나 고치고 있는지: 이름, 값, 막대. 양쪽으로 가는 값(AGC·좌우)은
+        0 에서 양쪽으로, 줄이기만 하는 값은 오른쪽 끝(0)에서 왼쪽으로 자란다.'''
+        rect = self.meter_rect
+        values = self.meter_values
+        gap = self.METER_GAP
+        columns = self.get_meter_columns(rect.width)
+        width = (rect.width - gap * (columns - 1)) / columns
+        for index, (key, label, low, high, bipolar) in enumerate(self.METERS):
+            row, column = divmod(index, columns)
+            x = rect.x + column * (width + gap)
+            top = rect.y + row * (self.METER_ROW + self.RULE_GAP)
+            draw_text(gc, label, x, top, 7, RACK['dim'], bold=True)
+            value = None if values is None else values['limiter_hold' if key == 'limiter' else key]
+            if value is None:
+                text = '--'
+            elif key == 'fill' and value <= low:
+                text = 'off'
+            else:
+                shown = 0.0 if abs(value) < 0.05 else value  # '-0.0' 이 뜨지 않게
+                text = '%+.1f dB' % shown if bipolar else '%.1f dB' % min(0.0, shown)
+            draw_text(gc, text, x + width, top, 7, RACK['text'] if value is not None else
+                      RACK['faint'], align='right')
+            bar = wx.Rect(int(x), top + 17, int(width), 5)
+            fill_rect(gc, RACK['track'], bar.x, bar.y, bar.width, bar.height, 2)
+            zero = bar.x + bar.width * (0.0 - low) / (high - low)
+            if value is not None and not (key == 'fill' and value <= low):
+                v = min(max(value, low), high)
+                at = bar.x + bar.width * (v - low) / (high - low)
+                if key == 'fill':
+                    left, right = bar.x, at
+                else:
+                    left, right = min(at, zero), max(at, zero)
+                if right - left >= 1:
+                    fill_rect(gc, self.accent, left, bar.y, right - left, bar.height, 2)
+            if bipolar:
+                fill_rect(gc, RACK['dim'], zero, bar.y - 2, 1, bar.height + 4)
+
+    # 랙 손잡이로 둘 까닭이 없는 것 — 편집기 창 크기만 바꾸는 단추(사용자).
+    HIDDEN = ('large gui',)
+
+    def is_hidden(self, index):
+        params = self.data.get('params') or []
+        return index < len(params) and params[index][0].strip().lower() in self.HIDDEN
+
+    def get_groups(self):
+        '''이어진 같은 구역 번호끼리 묶은 손잡이 차례들. 구역을 모르면 한 묶음.'''
+        groups_of = self.data.get('groups') or []
+        groups = []
+        for index in range(len(self.knobs)):
+            if self.is_hidden(index):
+                continue
+            category = groups_of[index] if index < len(groups_of) else 0
+            if groups and groups[-1][0] == category:
+                groups[-1][1].append(index)
+            else:
+                groups.append((category, [index]))
+        return [indices for category, indices in groups]
+
+    def flow(self, body_width):
+        '''손잡이 자리(줄, x)와 구역 금 자리(줄, x), 줄 수. 한 구역은 되도록 한 줄에 함께 두고,
+        남은 자리에 안 들어가면 다음 줄로 넘긴다. 한 줄보다 긴 구역은 그 안에서 줄을 바꾼다.'''
+        # 첫 줄만 오른쪽 Edit·Choose 단추 기둥을 비운다. 둘째 줄부터는 단추 아래까지 다 쓴다(사용자).
+        def get_room(row):
+            return max(self.KNOB, body_width - (self.BUTTONS + 12 if row == 0 and self.BUTTONS else 0))
+        places, separators = {}, []
+        row = x = 0
+        for group in self.get_groups():
+            width = len(group) * self.KNOB + (len(group) - 1) * self.KNOB_GAP
+            room = get_room(row)
+            if x > 0:
+                if x + self.SEPARATOR + width <= room:
+                    separators.append((row, x + self.SEPARATOR // 2))
+                    x += self.SEPARATOR
+                else:
+                    row, x = row + 1, 0
+            for index in group:
+                if x > 0 and x + self.KNOB > get_room(row):
+                    row, x = row + 1, 0
+                places[index] = (row, x)
+                x += self.KNOB + self.KNOB_GAP
+            x -= self.KNOB_GAP
+        return places, separators, row + 1
+
+    def is_leveler(self):
+        return self.data.get('name') == 'PyWinAudio Leveler'
+
+    def get_height(self, width):
+        if self.folded:
+            return FOLDED
+        parts = []
+        if self.shows_meters():
+            rows = self.get_meter_rows(width - PAD * 2)
+            parts.append(rows * self.METER_ROW + (rows - 1) * self.RULE_GAP)
+        if self.shows_controls():
+            rows = self.flow(width - PAD * 2)[2]
+            parts.append(rows * KNOB_ROW + (rows - 1) * self.ROW_GAP)
+        return BODY_TOP + sum(parts) + self.ROW_GAP * (len(parts) - 1) + BOTTOM
+
+    def get_meter_columns(self, body_width):
+        '''계기 칸이 이름·값이 겹치지 않을 만큼 넓게 — 좁으면 줄을 바꾼다(사용자).'''
+        return max(1, min(len(self.METERS), (body_width + self.METER_GAP) //
+                          (self.METER_CELL + self.METER_GAP)))
+
+    def get_meter_rows(self, body_width):
+        return math.ceil(len(self.METERS) / self.get_meter_columns(body_width))
+
+    def update_meters(self, elapsed):
+        '''플러그인이 audiodg 안에서 적은 값을 읽는다. 리미터는 블록마다 들쭉날쭉해 봉우리를
+        잡고 천천히 놓는다. 값이 바뀌었으면 참.'''
+        from levelermeter import READER
+        values = READER.read()
+        old = self.meter_values
+        if values is not None:
+            held = (old or {}).get('limiter_hold', 0.0) + self.LIMITER_FALL * elapsed
+            values['limiter_hold'] = min(0.0, min(values['limiter'], held))
+        self.meter_values = values
+        return values != old
+
     def layout_body(self, gc, body):
-        width = max(self.edit.get_width(gc), self.choose.get_width(gc))
-        right = body.x + body.width
-        middle = body.y + (body.height - Button.HEIGHT * 2 - 6) // 2
+        width = max(1, self.BUTTONS)
+        # 단추 테두리는 칸 1 화소 바깥까지 보인다. 실측 오른쪽 여백을 PAD 에 맞춘다.
+        right = body.x + body.width - 1
+        middle = body.y + (KNOB_ROW - Button.HEIGHT * 2 - 6) // 2
         self.edit.rect = wx.Rect(right - width, middle, width, Button.HEIGHT)
         self.choose.rect = wx.Rect(right - width, middle + Button.HEIGHT + 6, width,
                                    Button.HEIGHT)
         path = self.data.get('path')
-        self.edit.enabled = bool(path and os.path.exists(path))
-        room = body.width - width - 12
-        count = max(0, min(len(self.knobs), room // (self.KNOB + 4)))
-        self.visible = self.knobs[:count]
-        place_knobs(self.visible, body, width=self.KNOB, gc=gc)
-        self.hidden = len(self.knobs) - count
-        self.more = (body.x + count * (self.KNOB + 4) + 4, body.y + body.height / 2 - 6)
+        self.edit.enabled = bool(path and os.path.exists(path) and
+                                 self.data.get('has_editor', True))
+        places, separators, rows = self.flow(body.width)
+        self.visible = [knob for index, knob in enumerate(self.knobs) if index in places]
+        # 줄 맨 앞 손잡이들 가운데 가장 넓게 퍼지는 것에 맞춰 모든 줄을 같은 만큼 당긴다 —
+        # 줄마다 따로 당기면 기둥이 어긋난다.
+        first = [self.knobs[index] for index, (row, x) in places.items() if x == 0]
+        shift = 0
+        if first:
+            shift = max(0, int(self.KNOB / 2 - max(knob.get_reach(gc, self.KNOB)
+                                                    for knob in first)))
+        # Leveler 는 보정 계기를 맨 위에, 그 아래 금 하나, 그 아래 손잡이들(사용자).
+        top = body.y
+        self.meter_rect = None
+        meter_separator = []
+        if self.shows_meters():
+            meter_rows = self.get_meter_rows(body.width)
+            height = meter_rows * self.METER_ROW + (meter_rows - 1) * self.RULE_GAP
+            self.meter_rect = wx.Rect(body.x, body.y, body.width, height)
+            top = body.y + height + self.ROW_GAP
+            meter_separator = [wx.Rect(body.x, top - self.RULE_GAP - 1, body.width, 1)]
+        if not self.shows_controls():
+            # 상세 설정을 숨기면 계기 줄만 남는다(사용자). 손잡이는 자리도 받지 않는다.
+            for knob in self.knobs:
+                knob.rect = wx.Rect()
+            self.separators = []
+            return
+        for index, knob in enumerate(self.knobs):
+            if index not in places:
+                knob.rect = wx.Rect()
+                continue
+            row, x = places[index]
+            y = top + row * (KNOB_ROW + self.ROW_GAP) - KNOB_TOP
+            knob.rect = wx.Rect(body.x - shift + x, y, self.KNOB, KNOB_ROW + KNOB_TOP + 2)
+        self.separators = [wx.Rect(body.x - shift + x, top + row * (KNOB_ROW + self.ROW_GAP) + 4,
+                                   1, KNOB_ROW - 8) for row, x in separators]
+        # 줄 사이 가로 금. 손잡이가 놓인 데까지만 — 가장 오른쪽까지 보이는 손잡이의 끝에서 멈춘다(사용자).
+        end = max(knob.rect.x + self.KNOB / 2 + knob.get_reach(gc, self.KNOB)
+                  for knob in self.visible) if self.visible else body.x
+        self.separators += [wx.Rect(body.x, top + row * (KNOB_ROW + self.ROW_GAP) - self.RULE_GAP - 1,
+                                    int(round(end - body.x)), 1) for row in range(1, rows)]
+        self.separators += meter_separator
 
     def draw_body(self, gc):
-        if self.hidden > 0 and self.visible:
-            draw_text(gc, '+%d' % self.hidden, *self.more, 8, RACK['dim'], engraved=True)
-        elif not self.knobs and self.data.get('path'):
+        for rect in getattr(self, 'separators', ()):
+            fill_rect(gc, RACK['line'], rect.x, rect.y, rect.width, rect.height)
+        if self.meter_rect is not None:
+            self.draw_meters(gc)
+        if not self.knobs and self.data.get('path'):
             draw_text(gc, 'No parameters', self.body.x, self.body.y + self.body.height / 2 - 6,
                       8, RACK['faint'])
 
@@ -1000,7 +1243,93 @@ UNIT_CLASSES = {
 }
 
 
+class LevelerUnit(VstUnit):
+    '''PyWinAudio Leveler. 속은 VST 장치 그대로지만 PyWinAudio 와 함께 깔리는 것이라 기본 장치처럼
+    다룬다(사용자): 파일을 고르지 않고, 편집기가 없어 Edit·Choose 단추를 두지 않으며 그 자리까지
+    손잡이가 쓴다. 이름과 색도 제 것.'''
+
+    BUTTONS = 0
+
+    def __init__(self, data, rack):
+        super().__init__(data, rack)
+        self.face, self.accent = FACES['leveler']
+
+    def build(self):
+        super().build()
+        # Analyzer 의 구역 단추처럼: 계기와 상세 설정을 따로 보이고 숨긴다. 둘 다 끌 수는 없다.
+        # 모양·자리 모두 Analyzer 의 구역 칩과 같게: 제목 바로 뒤의 작은 글씨 칩(사용자).
+        self.meters_button = Chip('Meters', lambda: self.toggle_part('show_meters'),
+                                  lambda: self.data.get('show_meters', True),
+                                  tip='Show or hide the meters')
+        self.controls_button = Chip('Controls', lambda: self.toggle_part('show_controls'),
+                                    lambda: self.data.get('show_controls', True),
+                                    tip='Show or hide the detailed settings')
+        self.chips = [self.meters_button, self.controls_button]
+        self.extras = []
+        self.subtitle_left = None
+
+    def get_controls(self):
+        # 칩은 접어도 이름 띠에 남아 누를 수 있다(Analyzer 처럼).
+        return super().get_controls() + self.chips
+
+    def layout(self, gc, rect):
+        super().layout(gc, rect)
+        left = self.power.rect.x + 22
+        set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
+        x = left + gc.GetTextExtent(self.get_title().upper())[0] + 14
+        middle = rect.y + FOLDED // 2
+        for chip in self.chips:
+            width = get_chip_width(gc, chip.caption)
+            chip.rect = wx.Rect(int(x), middle - CHIP_HEIGHT // 2, width, CHIP_HEIGHT)
+            x += width + CHIP_GAP
+        self.subtitle_left = x - CHIP_GAP + 12
+
+    def draw(self, gc):
+        # 제목은 그대로, 부제는 칩 뒤에 쓴다.
+        subtitle = self.get_subtitle()
+        self.get_subtitle = lambda: ''
+        try:
+            super().draw(gc)
+        finally:
+            del self.get_subtitle
+        if subtitle and self.subtitle_left is not None:
+            tone = self.get_subtitle_tone()
+            set_font(gc, 8, tone)
+            limit = max(0, self.header_right - self.subtitle_left)
+            draw_text(gc, fit_text(gc, subtitle, limit), self.subtitle_left,
+                      self.rect.y + HEADER_BAND / 2 - 6, 8, tone, engraved=True)
+
+    def toggle_part(self, key):
+        other = 'show_controls' if key == 'show_meters' else 'show_meters'
+        shown = not self.data.get(key, True)
+        self.data[key] = shown
+        if not shown and not self.data.get(other, True):
+            self.data[other] = True
+        self.rack.on_unit_change(self)
+
+    def get_title(self):
+        return 'Leveler'
+
+    def get_subtitle(self):
+        if self.data.get('error'):
+            return self.data['error']
+        if self.notice:
+            return self.notice
+        if not os.path.exists(self.data.get('path') or LEVELER_PATH):
+            return 'Not installed: run plugin\\install.ps1'
+        return 'AGC, stereo, limiter'
+
+    def is_leveler(self):
+        return True
+
+
+def is_leveler_data(data):
+    return data.get('kind') == 'vst' and os.path.basename(data.get('path') or '').lower() == LEVELER_FILE
+
+
 def build_unit(data, rack):
+    if is_leveler_data(data):
+        return LevelerUnit(data, rack)
     return UNIT_CLASSES.get(data['kind'], CustomUnit)(data, rack)
 
 

@@ -41,7 +41,7 @@ from units import TIGHT_PAD
 COLUMN = 64
 # 채널 사이는 1 화소 금(사용자: 세로 구분선도 가늘게). 가로 금과 같은 색.
 COLUMN_GAP = 1
-COLUMN_HEIGHT = 222
+COLUMN_HEIGHT = 192
 # 가르는 금과 위아래 글씨·손잡이 사이(실측해 맞춘 값).
 RULE_GAP = 8
 # 손잡이 길 아래 끝에서 칸 아래 끝까지. 그 사이에 가르는 금, 그 아래 볼륨 숫자와 M.
@@ -149,7 +149,7 @@ class ChannelFader(Control):
         self.origin = None
 
     def draw(self, gc, accent):
-        '''가는 길, 왼쪽에 dB 눈금 숫자(청록), 밝은 회색 납작한 손잡이.'''
+        '''가는 길, 왼쪽에 dB 눈금 숫자(청록), 중간 회색 납작한 손잡이(밝으면 튄다 — 사용자).'''
         rect = self.rect
         cx = rect.x + rect.width / 2
         volume = self.channel.get_volume()
@@ -164,7 +164,7 @@ class ChannelFader(Control):
         lit = self.hovered or self.pressed
         cap = wx.Rect(round(rect.x + 3), round(y - CAP_HEIGHT / 2), rect.width - 6, CAP_HEIGHT)
         gc.SetPen(wx.TRANSPARENT_PEN)
-        gc.SetBrush(wx.Brush(wx.Colour('#e6e7e9' if lit else '#c4c7cc')))
+        gc.SetBrush(wx.Brush(wx.Colour('#a9adb3' if lit else '#868a91')))
         gc.DrawRoundedRectangle(cap.x, cap.y, cap.width, cap.height, 2)
         fill_rect(gc, '#2a2d32', cap.x + 3, y - 0.5, cap.width - 6, 1)
 
