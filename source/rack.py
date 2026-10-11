@@ -47,7 +47,8 @@ from mixunit import MixerUnit
 from utilities import Canvas
 
 
-MARGIN = 14
+# 창 좌우·아래 여백. 14 는 넓어 보였다(사용자) — 스크롤바(폭 4 + 안쪽 3)가 들어갈 만큼만.
+MARGIN = 8
 GAP = 3
 # 믹서 레벨을 다시 그리는 박자와 세션 목록을 다시 읽는 간격.
 MIXER_FPS = 30
@@ -55,10 +56,15 @@ MIXER_REFRESH = 1000
 MIXER_FALL = 15.0
 WHEEL_STEP = 60
 # 스크롤바는 평소에 숨는다. 굴리거나 끌 때, 오른쪽 여백에 손이 갈 때만 가는 막대로 뜬다.
-SCROLLBAR = 3
-SCROLLBAR_HOVER = 4
-SCROLL_MIN = 30
-SCROLL_SHOW = 1.0
+# 색·모양은 PyWinAgent 의 막대 그대로(사용자): 폭 4, 모서리 2, 오른쪽 끝에서 3 안쪽, 어두운 테두리색.
+SCROLLBAR = 4
+SCROLLBAR_INSET = 3
+SCROLLBAR_COLOUR = '#3a3f46'
+SCROLL_MIN = 24
+# 굴리고 나면 0.7 초 머문 뒤 0.4 초에 걸쳐 옅어진다 — 처음엔 빠르게, 끝에서 늦게(PyWinAgent 와 같다).
+SCROLL_HOLD = 0.7
+SCROLL_FADE = 0.4
+SCROLL_STEP = 16
 
 
 class MasterUnit:
@@ -269,14 +275,17 @@ class RackView(Canvas):
         self.boost = None
         self.confirm = None
         self.meter_boxes = []
-        # 핀을 뺀 Analyzer 판이 랙 맨 위에 차지하는 자리. 판은 따로 된 창이라 랙은 자리만 비운다.
         # 핀을 뺀 Analyzer 판이 앉을 자리. 신호 흐름대로 맨 아래(ADD 다음)에 비워 둔다(사용자).
         self.bottom_space = 0
         self.meters_y = 0
+        # 맨 위 판 앞의 틈. 위에 핀 꽂은 Analyzer 가 있으면 장치 사이 GAP, 없으면 창 여백 MARGIN(주 창이 정한다).
+        self.top_gap = MARGIN
         self.on_scroll = None
         self.notified = None
         self.scrolled_at = 0.0
         self.near_edge = False
+        self.fade_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_scroll_fade, self.fade_timer)
         # WS_EX_COMPOSITED 를 켜 두면 믹서 레벨 한 칸만 다시 그리라고 해도 창 전체가 다시
         # 그려진다(실측: 한 코어 92 %). 버퍼는 AutoBufferedPaintDC 가 맡는다.
         self.SetDoubleBuffered(False)
@@ -462,6 +471,7 @@ class RackView(Canvas):
 
     def close(self):
         self.pacer.running = False
+        self.fade_timer.Stop()
         if self.refresher is not None and self.refresher.IsRunning():
             self.refresher.Stop()
         for unit in self.units:
@@ -487,7 +497,7 @@ class RackView(Canvas):
                 yield control
 
     def layout(self, gc, width):
-        y = GAP
+        y = self.top_gap
         inner = width - MARGIN * 2
         for block in self.get_blocks():
             height = block.get_height(inner) if hasattr(block, 'get_height') else block.height
@@ -495,7 +505,8 @@ class RackView(Canvas):
             y += block.rect.height + GAP
         # 아래 Analyzer 판과는 장치 사이와 같은 간격만 둔다. 레일만 보이는 틈을 남기지 않는다.
         self.meters_y = y
-        self.total = y + self.bottom_space + (GAP if self.bottom_space else 0) + MARGIN
+        # 맨 아래 여백은 좌우와 같은 MARGIN 하나. 마지막 판 뒤의 GAP 까지 더하면 3 화소 넓었다(사용자).
+        self.total = (y + self.bottom_space if self.bottom_space else y - GAP) + MARGIN
         if self.confirm is not None:
             self.confirm.layout(gc)
         for control in self.get_controls():
@@ -575,24 +586,46 @@ class RackView(Canvas):
         top = (height - size) * self.offset / max(1, self.total - height)
         # 잡는 자리는 오른쪽 여백 전체. 그리는 막대만 가늘다.
         self.thumb = wx.Rect(width - MARGIN, round(top), MARGIN, round(size))
-        dragging = self.thumb_drag is not None
-        recent = time.perf_counter() - self.scrolled_at < SCROLL_SHOW
-        if not (dragging or recent or self.near_edge):
+        alpha = self.get_scroll_alpha()
+        if alpha <= 0:
             return
-        bar = SCROLLBAR_HOVER if dragging or self.near_edge else SCROLLBAR
-        colour = RACK['dim'] if dragging else RACK['faint']
-        fill_rect(gc, colour, width - (MARGIN + bar) // 2, self.thumb.y + 2, bar,
-                  self.thumb.height - 4, bar / 2)
+        tone = wx.Colour(SCROLLBAR_COLOUR)
+        fill_rect(gc, wx.Colour(tone.Red(), tone.Green(), tone.Blue(), int(255 * alpha)),
+                  width - SCROLLBAR_INSET - SCROLLBAR, self.thumb.y, SCROLLBAR, self.thumb.height, 2)
+
+    def get_scroll_alpha(self):
+        '''끌거나 오른쪽 여백에 손이 있으면 다 보이고, 그 밖에는 굴린 뒤 머물렀다가 옅어진다.'''
+        if self.thumb_drag is not None or self.near_edge:
+            return 1.0
+        elapsed = time.perf_counter() - self.scrolled_at - SCROLL_HOLD
+        if elapsed <= 0:
+            return 1.0
+        progress = min(1.0, elapsed / SCROLL_FADE)
+        return (1.0 - progress) ** 2
+
+    def on_scroll_fade(self, event):
+        if not self:
+            return
+        width, height = self.GetClientSize()
+        # 옅어지는 동안은 막대 자리만 다시 그린다. 판 전체를 60 번 그리면 무겁다.
+        self.RefreshRect(wx.Rect(width - MARGIN, 0, MARGIN, height), False)
+        if self.get_scroll_alpha() <= 0:
+            self.fade_timer.Stop()
 
     def show_scrollbar(self):
         '''굴린 뒤 잠깐 보이고 다시 숨는다. 숨길 때 한 번 더 그린다.'''
         self.scrolled_at = time.perf_counter()
-        wx.CallLater(int(SCROLL_SHOW * 1000) + 50, lambda: self and self.Refresh())
+        if not self.fade_timer.IsRunning():
+            self.fade_timer.Start(SCROLL_STEP)
 
     def set_near_edge(self, near):
         if near != self.near_edge:
             self.near_edge = near
-            self.Refresh()
+            if near:
+                self.Refresh()
+            else:
+                # 손이 떠나면 곧장 지우지 않고 굴린 뒤처럼 머물렀다 옅어진다.
+                self.show_scrollbar()
 
     # ------------------------------------------------------------ 마우스
 

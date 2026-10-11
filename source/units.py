@@ -64,7 +64,11 @@ FOLD = 18
 BODY_TOP = HEADER_BAND + 1 + PAD
 BOTTOM = PAD
 # 믹서와 Analyzer 판은 칸·화면이 촘촘한 판이라 안쪽 여백을 더 작게(사용자).
-TIGHT_PAD = 8
+# 믹서·Analyzer 판 안쪽 여백. 8 도 넓었다(사용자) → 6.
+TIGHT_PAD = 6
+# Analyzer 의 머리 띠 아래 금에서 화면까지. 금(1 화소)까지 여백으로 읽혀 Analyzer 만 위가 커 보였다(사용자,
+# 믹서는 괜찮다) — 금을 넣어 TIGHT_PAD.
+TIGHT_TOP = TIGHT_PAD - 1
 # 손잡이 한 줄의 보이는 키. 손잡이 칸(64)은 글씨 위아래 여유를 품고 있어 보이는 것은 이만큼.
 KNOB_ROW = 62
 # 손잡이 칸 맨 위에서 이름 글씨가 보이기 시작하는 곳까지.
@@ -1069,6 +1073,10 @@ class VstUnit(Unit):
                     left, right = min(at, zero), max(at, zero)
                 if right - left >= 1:
                     fill_rect(gc, self.accent, left, bar.y, right - left, bar.height, 2)
+                    # 가운데 0 에서 자라는 막대는 0 쪽이 시작점이라 각지게 — 둥글면 끝처럼 보인다(사용자).
+                    if bipolar and right - left > 2:
+                        side = left if at >= zero else right - 2
+                        fill_rect(gc, self.accent, side, bar.y, 2, bar.height)
             if bipolar:
                 fill_rect(gc, RACK['dim'], zero, bar.y - 2, 1, bar.height + 4)
 
@@ -1201,6 +1209,9 @@ class VstUnit(Unit):
         # 줄 사이 가로 금. 손잡이가 놓인 데까지만 — 가장 오른쪽까지 보이는 손잡이의 끝에서 멈춘다(사용자).
         end = max(knob.rect.x + self.KNOB / 2 + knob.get_reach(gc, self.KNOB)
                   for knob in self.visible) if self.visible else body.x
+        # 계기 줄이 있는 판(Leveler)은 계기 아래 금이 판 끝까지 간다. 줄 사이 금도 거기에 맞춘다(사용자).
+        if meter_separator:
+            end = body.x + body.width
         self.separators += [wx.Rect(body.x, top + row * (KNOB_ROW + self.ROW_GAP) - self.RULE_GAP - 1,
                                     int(round(end - body.x)), 1) for row in range(1, rows)]
         self.separators += meter_separator

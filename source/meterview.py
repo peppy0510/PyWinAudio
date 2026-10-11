@@ -53,13 +53,14 @@ from units import FOLD
 from units import FOLDED
 from units import PAD
 from units import TIGHT_PAD
+from units import TIGHT_TOP
 
 
 # 30 장이면 막대와 곡선이 눈으로 이어져 보인다. 40 장이던 때보다 CPU 를 4 분의 1 덜 쓴다.
 FPS = 30
-MARGIN = 14
-# 판은 제목줄 바로 아래에 붙는다. 위에 레일만 보이는 틈을 두지 않는다.
-TOP = 0
+# 창 위·좌우·아래 여백. 14 는 넓어 보였다(사용자) — 스크롤바(폭 4 + 안쪽 3)가 들어갈 만큼만.
+# 위 여백은 핀을 꽂아 창 맨 위에 설 때만 둔다. 핀을 빼면 랙 맨 아래 칸이라 위는 장치 사이 GAP 이다.
+MARGIN = 8
 # 계기판은 판 하나, 화면 하나다(사용자). 화면 안에 LEVEL · PHASE · SPECTRUM · BARS 구역이
 # 가는 금으로 나뉘어 쌓이고, 이름 띠의 토글 단추로 구역마다 보이고 숨긴다. 차례는 미터,
 # 막대 띠, 분석기(사용자 지정). 화면 테두리는 판 가장자리·띠 아래 금에서 TIGHT_PAD.
@@ -103,11 +104,14 @@ SCOPE_SAMPLES = 1536
 # 가장 높은·낮은 값(옅게)과 RMS(밝게). 40 ms 파형은 믹스된 음악에서 잡음처럼만 보였다. 크기는 고정
 # (위아래 끝 = 0 dBFS)이라 시간에 따른 세기를 그대로 읽는다.
 # 스펙트로그램: 한 장마다 오른쪽에 한 줄을 붙이고 왼쪽으로 민다. 세로는 분석기와 같은 로그
-# 주파수, 같은 기울기. 색은 바탕 → 짙은 파랑 → 파랑 → 흰빛 → 주황(초록 없음 — 사용자 색각).
+# 주파수, 같은 기울기.
 GRAM_LOW = -84.0
 GRAM_HIGH = -12.0
-GRAM_STOPS = ((0.0, '#111215'), (0.30, '#16306a'), (0.58, '#4c9aff'), (0.80, '#dfe9ff'),
-              (0.92, '#ffb04d'), (1.0, '#ff7a33'))
+# 색은 inferno(matplotlib) 단계 — 바탕 → 보라 → 빨강·주황 → 노랑 → 흰빛(사용자). 초록이 거의 없고 밝기가
+# 끝까지 오르기만 해 적록색약에서도 세기가 읽힌다. 0 은 LCD 바탕색으로 두어 빈 자리가 화면과 같다.
+GRAM_STOPS = ((0.0, '#111215'), (0.125, '#1f0c48'), (0.25, '#57106e'), (0.375, '#8a226a'),
+              (0.5, '#bc3754'), (0.625, '#e45a31'), (0.75, '#f98e09'), (0.875, '#f6d746'),
+              (1.0, '#fcffa4'))
 GRAM_FREQS = (100, 1000, 10000)
 
 # PyMusicPlayer 의 스펙트럼(playbox.PlayBoxSpectrum · audio.get_stream_spectrum_vectorscope)을
@@ -164,32 +168,46 @@ def get_autogain_weights():
 
 
 AUTOGAIN_WEIGHTS = get_autogain_weights()
-BAR_COLOUR = '#f0f0f8'
 # 막대 한 벌의 수와 바라는 간격. 막대 폭은 넓어져도 1 화소 그대로다(사용자: 뚱뚱해지지 않게).
 BAR_SET = 103
 BAR_PITCH = 3
 BAR_WIDTH = 1
-BAR_GROUND = '#25282d'
 # 앞 장의 점이 이만큼씩 남는다. 형광 화면처럼 자취가 남아 모양이 읽힌다.
 SCOPE_PERSIST = 0.55
 SCOPE_DOT = 0.30
 
 # 막대 색. 낮은 쪽은 파랑, 위로 갈수록 호박색·주황 — 초록·빨강 축을 쓰지 않는다.
 LOW = '#4c9aff'
+# 막대 색은 레벨 막대와 같은 파랑 한 색(사용자: 흰 막대만 떠 보였다 → 섞으면 뿌옇다 → 높이에 따라
+# 바꾸지 말고 한 색으로).
+# 막대 무리(레벨·CORR·BAL·스펙트럼 막대)의 파랑. LOW 를 흰색 쪽으로 75 % — 1 화소 칸은 같은 색도
+# 어둡게 읽혀 더 희게(사용자: 18·30·45·60 % 도 어둡다). 막대 끝을 바탕 쪽으로 섞으면 뿌옇다(사용자).
+METER_BLUE = '#d2e6ff'
+# 선·점(벡터스코프·스펙트럼 곡선·SCOPE 파형)의 파랑 — METER_BLUE 에 LOW 를 35 % 남긴 색. 막대보다 한
+# 단계 낮아야 점이 몰린 자리가 하얗게 뜨지 않는다(사용자). 세 곳이 한 톤(사용자).
+TRACE_BLUE = '#a3cbff'
+BAR_COLOUR = METER_BLUE
 MID = '#ffb04d'
 HIGH = '#ff7a33'
 CLIP = '#ff7a33'
+# 막대 무리의 주황 둘도 흰색 쪽으로 — 1 화소 칸에서 피크 쪽이 어두웠다(사용자). 60 % 는 붉은 기가 빠져
+# 더 붉게(사용자): -9~-3 은 25 %, -3 위는 15 % 만 섞는다.
+METER_MID = '#ffc47a'
+METER_HIGH = '#ff8e52'
 # 칸으로 나뉜 LED 막대. 꺼진 칸도 제 색을 옅게 남겨 기기처럼 보이게.
 SEGMENT_OFF = 0.84
-SEGMENT_HALF = 0.42
-# 가로 미터. 줄마다 가는 막대 하나(6 화소), 칸은 2 화소 + 틈 1 화소. 위 두 줄 L·R,
+# RMS 위 순간 피크까지의 칸도 같은 밝기 — 0.42·0.15 로 어둡게 하면 피크 쪽이 어두웠다(사용자: 더 밝게).
+SEGMENT_HALF = 0.0
+# 가로 미터. 줄마다 가는 막대 하나(6 화소), 칸은 1 화소 + 틈 2 화소. 위 두 줄 L·R,
 # 가운데 눈금 줄, 아래 세 줄 M·S·I(라우드니스). 오른쪽에 숫자 두 칸.
 BAR = 6
 ROW = 12
 METER_FLOOR = -48.0
 METER_SCALE = (0, -3, -6, -9, -12, -18, -24, -30, -36, -42, -48)
-SEGMENT = 2
-SEGMENT_GAP = 1
+# 칸 1 화소, 틈 2 화소 — 스펙트럼 막대(1 화소, 3 화소 간격)와 같은 결·같은 밝기(사용자). 2/1 일 때는
+# 같은 색인데도 막대 띠만 어두워 보였다(칠한 면적 1/3 대 2/3).
+SEGMENT = 1
+SEGMENT_GAP = 2
 # 이름 칸(L·R·M·S·I). 막대 오른쪽 끝, 클립 표시 다음에 선다 — 왼쪽은 스코프만 남아 가운데
 # 막대가 길어진다(사용자). 글자 폭이 달라도 칸 가운데에 선다.
 NAME_WIDTH = 12
@@ -419,11 +437,15 @@ class MeterView(wx.Panel):
 
     # ------------------------------------------------------------ 자리
 
+    def get_top(self):
+        return MARGIN if self.pinned else 0
+
     def get_height(self, width):
+        top = self.get_top()
         shown = [name for name in PARTS if not self.parts[name]]
         if self.folded or not shown:
-            return TOP + FOLDED
-        return (TOP + HEADER_BAND + 1 + TIGHT_PAD + sum(PART_BODIES[name] for name in shown) +
+            return top + FOLDED
+        return (top + HEADER_BAND + 1 + TIGHT_TOP + sum(PART_BODIES[name] for name in shown) +
                 len(shown) - 1 + TIGHT_PAD)
 
     def on_size(self, event):
@@ -444,8 +466,8 @@ class MeterView(wx.Panel):
         '''이름 띠: 접기 · 켜기 · 제목 · 구역 토글 단추들 … 장치 이름 · PIN. 그 아래 화면 하나에
         보이는 구역만 차례로 쌓고 사이에 금 한 줄. 화면 테두리는 판 가장자리와 띠 아래 금에서
         PAD 만큼 떨어진다.'''
-        plate = wx.Rect(MARGIN, TOP, width - MARGIN - self.right_margin,
-                        self.get_height(width) - TOP)
+        plate = wx.Rect(MARGIN, self.get_top(), width - MARGIN - self.right_margin,
+                        self.get_height(width) - self.get_top())
         left = plate.x + PAD
         right = plate.x + plate.width - PAD
         middle = plate.y + FOLDED // 2
@@ -471,7 +493,7 @@ class MeterView(wx.Panel):
         if self.folded or not shown:
             return regions
         # 화면 테두리는 화면 1 화소 바깥에 그린다. 테두리가 TIGHT_PAD 에 닿게 한 칸 들인다.
-        top = HEADER_BAND + 1 + TIGHT_PAD
+        top = HEADER_BAND + 1 + TIGHT_TOP
         body = wx.Rect(plate.x + TIGHT_PAD + 1, plate.y + top + 1,
                        plate.width - TIGHT_PAD * 2 - 2, plate.height - top - TIGHT_PAD - 2)
         regions['screen'] = body
@@ -747,10 +769,11 @@ class MeterView(wx.Panel):
     def draw_strip_ground(self, gc, regions):
         # 막대 자리마다 가운데에 낮은 점을 깔아 둔다. 소리가 없어도 띠가 비어 보이지 않게.
         gc.SetPen(wx.TRANSPARENT_PEN)
-        gc.SetBrush(wx.Brush(wx.Colour(BAR_GROUND)))
+        # 바닥 점은 레벨 막대의 꺼진 칸과 같은 색 — 회색 점이 따로 놀지 않게(사용자: 최대한 깔끔하게).
+        gc.SetBrush(wx.Brush(mix(METER_BLUE, RACK['lcd'], SEGMENT_OFF)))
         bars = self.get_bars_inner(regions['strip'])
         for rect in self.get_bar_rects(bars, [0.0] * (len(self.get_bar_bins()) - 1)):
-            gc.DrawRectangle(rect[0], bars.y + bars.height // 2 - 1, rect[2], 2)
+            gc.DrawRectangle(rect[0], rect[1], rect[2], rect[3])
 
     def get_scope_radius(self, scope):
         return min(scope.width, scope.height) / 2 - 5
@@ -773,7 +796,7 @@ class MeterView(wx.Panel):
         '''위상 상관(-1 … +1)과 좌우 균형(L 6 dB … R 6 dB). 레벨 막대와 같은 칸, 꺼진 칸은
         옅게, 가운데(0) 칸 위아래로 금 하나.'''
         xs = regions['phase_segments']
-        off = mix(LOW, RACK['lcd'], SEGMENT_OFF)
+        off = mix(METER_BLUE, RACK['lcd'], SEGMENT_OFF)
         middle = xs[regions['phase_middle']]
         for key in ('correlation', 'balance'):
             bar = regions[key]
@@ -805,7 +828,7 @@ class MeterView(wx.Panel):
         self.bar_bins = (scale, bins)
         return bins
 
-    def get_bar_rects(self, rect, levels):
+    def get_bar_rects(self, rect, levels, floor=1):
         '''막대는 1 화소, 간격은 늘 BAR_PITCH 화소로 띠 폭을 끝에서 끝까지 채운다. 반음 막대
         수와 자리 수가 다르면 값을 다시 고른다 — 자리가 많으면 이웃 막대 사이를 잇고(선형
         보간), 적으면 모이는 막대 중 큰 값을 남긴다. 예전에는 막대 수를 그대로 두고 간격을
@@ -823,11 +846,11 @@ class MeterView(wx.Panel):
             edges[1:] = numpy.maximum(edges[1:], edges[:-1] + 1)
             levels = numpy.maximum.reduceat(levels, numpy.minimum(edges[:-1], source - 1))
         offset = (rect.width - BAR_PITCH * (count - 1)) // 2
-        height = rect.height
-        return [(int(rect.x + BAR_PITCH * index + offset),
-                 int(rect.y + (height - level * height * BAR_HEIGHT) * 0.5),
-                 BAR_WIDTH, max(1, int(level * height * BAR_HEIGHT)))
-                for index, level in enumerate(levels)]
+        # 가운데 줄에서 위아래로 같은 화소만큼 — 반올림이 위아래로 갈리면 막대 끝이 들쭉날쭉했다.
+        middle = rect.y + rect.height // 2
+        halves = numpy.maximum(floor, numpy.round(levels * rect.height * BAR_HEIGHT / 2)).astype(int)
+        return [(int(rect.x + BAR_PITCH * index + offset), int(middle - half), BAR_WIDTH, int(half * 2))
+                for index, half in enumerate(halves)]
 
     def get_spectrum_inner(self, rect):
         '''곡선 자리. 좌우·위아래 모두 LCD_PAD — 막대 띠와 끝이 맞는다.'''
@@ -891,8 +914,8 @@ class MeterView(wx.Panel):
 
     def get_wave_colour(self):
         if getattr(self, 'wave_colour', None) is None:
-            self.wave_colour = (list(wx.Colour(mix(LOW, RACK['lcd'], 0.45)).Get()[:3]) + [255],
-                                list(wx.Colour(mix(LOW, '#ffffff', 0.35)).Get()[:3]) + [255])
+            self.wave_colour = (list(mix(TRACE_BLUE, RACK['lcd'], 0.45).Get()[:3]) + [255],
+                                list(wx.Colour(TRACE_BLUE).Get()[:3]) + [255])
         return self.wave_colour
 
     def draw_gram(self, dc):
@@ -924,10 +947,10 @@ class MeterView(wx.Panel):
 
     def get_colour(self, db):
         if db >= -3:
-            return HIGH
+            return METER_HIGH
         if db >= -9:
-            return MID
-        return LOW
+            return METER_MID
+        return METER_BLUE
 
     def draw_levels(self, dc):
         '''L·R: RMS 까지 칸을 다 켜고, 그 위로 피크까지 옅게, 피크 홀드는 세로 한 줄.
@@ -1011,7 +1034,7 @@ class MeterView(wx.Panel):
             path.AddLineToPoint(x, y)
         path.AddLineToPoint(xs[-1], bottom)
         path.CloseSubpath()
-        tone = wx.Colour(LOW)
+        tone = wx.Colour(TRACE_BLUE)
         top = min(ys) if ys else inner.y
         gc.SetPen(wx.TRANSPARENT_PEN)
         gc.SetBrush(gc.CreateLinearGradientBrush(
@@ -1022,8 +1045,7 @@ class MeterView(wx.Panel):
         line.MoveToPoint(xs[0], ys[0])
         for x, y in zip(xs[1:], ys[1:]):
             line.AddLineToPoint(x, y)
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(mix(LOW, '#ffffff', 0.35)))
-                               .Width(1.4).Join(wx.JOIN_ROUND)))
+        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(TRACE_BLUE)).Width(1.4).Join(wx.JOIN_ROUND)))
         gc.SetBrush(wx.TRANSPARENT_BRUSH)
         gc.StrokePath(line)
         hold = self.spectrum_hold[0] if self.spectrum_hold is not None else None
@@ -1075,9 +1097,9 @@ class MeterView(wx.Panel):
         for key, ratio, value, tone in (
                 ('correlation', (self.correlation + 1) / 2,
                  '%+.2f' % self.correlation if abs(self.correlation) >= 0.005 else '0.00',
-                 LOW if self.correlation >= 0 else MID),
+                 METER_BLUE if self.correlation >= 0 else METER_MID),
                 ('balance', 0.5 + max(-1.0, min(1.0, self.balance / BALANCE_RANGE)) / 2,
-                 '%+.1f' % -self.balance if abs(self.balance) >= 0.05 else '0.0', LOW)):
+                 '%+.1f' % -self.balance if abs(self.balance) >= 0.05 else '0.0', METER_BLUE)):
             bar = regions[key]
             # 가운데 칸에서 값 쪽으로 칸을 켜고, 끝 칸은 밝게(예전 표시 자리).
             xs = regions['phase_segments']
@@ -1156,8 +1178,10 @@ class MeterView(wx.Panel):
         rect = self.get_bars_inner(self.regions['strip'])
         levels = numpy.minimum(self.bars, 1.0 / BAR_HEIGHT)
         dc.SetClippingRegion(rect)
-        dc.DrawRectangleList(self.get_bar_rects(rect, levels), pens=wx.Pen(wx.Colour(BAR_COLOUR), 1),
-                             brushes=get_brush(BAR_COLOUR))
+        # 0 인 자리는 그리지 않아 바닥 점이 그대로 보인다(최소 2 화소로 칠하면 무음 자리도 파랗게 찍혔다).
+        rects = [box for box in self.get_bar_rects(rect, levels, floor=0) if box[3] > 0]
+        if rects:
+            dc.DrawRectangleList(rects, pens=wx.TRANSPARENT_PEN, brushes=get_brush(BAR_COLOUR))
         dc.DestroyClippingRegion()
 
     def update_bars(self, recent, elapsed):
@@ -1351,7 +1375,9 @@ class MeterView(wx.Panel):
         점이 없는 자리만 비쳐 보이게 0 인 칸은 바탕과 같은 색이 아니라 투명으로 둔다.'''
         height, width = glow.shape
         base = numpy.array(wx.Colour(RACK['lcd']).Get()[:3], dtype='float32')
-        dot = numpy.array(wx.Colour(mix(LOW, '#ffffff', 0.3)).Get()[:3], dtype='float32')
+        # 점 색은 막대 무리의 METER_BLUE 쪽으로(사용자: 벡터스코프만 짙었다), 점이 몰려 하얗게 뜨지 않게
+        # 원래 파랑을 35 % 남긴다(사용자: 조금 더 어둡게).
+        dot = numpy.array(wx.Colour(TRACE_BLUE).Get()[:3], dtype='float32')
         level = glow[..., None]
         rgb = (base + (dot - base) * level).astype('uint8')
         alpha = (numpy.minimum(1.0, glow * 4) * 255).astype('uint8')

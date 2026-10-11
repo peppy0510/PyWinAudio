@@ -13,6 +13,7 @@ import wx
 import eapo
 
 from meterview import MeterView
+from rack import GAP
 from rack import MARGIN
 from rack import RackView
 from settingsbox import SettingsBox
@@ -138,10 +139,12 @@ class MainFrame(wx.Frame):
         meters.SetMinSize(wx.Size(-1, meter_height))
         if meters.pinned:
             self.rack.bottom_space = 0
+            self.rack.top_gap = GAP
             self.rack.SetSize(0, meter_height, width, max(1, height - meter_height))
             meters.SetSize(0, 0, meters_width, meter_height)
         else:
             self.rack.bottom_space = meter_height
+            self.rack.top_gap = MARGIN
             self.rack.SetSize(0, 0, width, height)
             meters.SetSize(0, self.rack.meters_y - self.rack.offset, meters_width, meter_height)
         self.meters.Raise()
