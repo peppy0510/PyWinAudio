@@ -872,8 +872,10 @@ class VstUnit(Unit):
         self.data['params'][index][1] = round(value, 6)
         if plugin is not None and index < plugin.count:
             plugin.set_value(index, value)
-            if plugin.uses_chunks:
-                self.data['chunk'] = plugin.get_chunk()
+            # 플러그인이 값을 거절하거나(LoudMax 는 Fader Link 가 켜지면 Output 이 끝에 닿은 채로
+            # Thresh 를 올리지 못한다) 다른 값을 함께 움직인다. 넣은 값을 믿지 말고 모두 다시
+            # 읽어 손잡이·숫자를 플러그인에 맞춘다.
+            self.read_state()
         self.changed()
 
     def on_edit(self):

@@ -138,6 +138,12 @@ class ChannelFader(Control):
         # 때까지 제자리에 서 있다(사용자: 움직이기 힘들다).
         self.on_move()
 
+    def on_dclick(self, point):
+        # 두 번 누르면 0 dB(배율 1.0) — 랙의 손잡이가 기본값으로 가는 것과 같다(사용자).
+        self.channel.set_volume(1.0)
+        self.origin = None
+        self.on_move()
+
     def on_up(self, point):
         self.pressed = False
         self.origin = None

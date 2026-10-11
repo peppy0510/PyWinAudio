@@ -67,7 +67,8 @@ CHIP_HEIGHT = 18
 CHIP_PAD = 8
 CHIP_GAP = 4
 # 막대 띠는 낮게(사용자: 높으면 보기 싫다 → 40 은 작다 → 52 는 조금 크다 → 46). 위상도 110 → 96.
-PART_BODIES = {'level': 118, 'spectrum': 160}
+# 두 구역 키는 같게(사용자).
+PART_BODIES = {'level': 118, 'spectrum': 118}
 LCD_PAD = 8
 PIN = 18
 PIN_WIDTH = 30
@@ -445,9 +446,11 @@ class MeterView(wx.Panel):
             if index:
                 regions['dividers'].append(wx.Rect(body.x, y, body.width, 1))
                 y += 1
-            height = PART_BODIES[name] - (2 if index == len(shown) - 1 else 0)
+            # 화면 테두리 몫 2 화소를 구역마다 고르게 덜어 같은 키의 구역은 같게 보인다.
+            trim = 2 // len(shown) + (1 if index < 2 % len(shown) else 0)
+            height = PART_BODIES[name] - trim
             sections[name] = wx.Rect(body.x, y, body.width, height)
-            y += PART_BODIES[name]
+            y += height
         if 'spectrum' in sections:
             regions['spectrum'] = sections['spectrum']
         if 'level' in sections:
@@ -526,6 +529,10 @@ class MeterView(wx.Panel):
         regions['clips'] = [wx.Rect(x1 - SEGMENT_GAP + CLIP_GAP, rows[key].y, CLIP_WIDTH, BAR)
                             for key in ('L', 'R')]
         regions['segments'] = self.get_segments(rows['L'])
+        # 상관·균형 줄도 같은 칸을 쓴다(사용자: 칸 있는 막대로 일관). 가운데 칸이 0 이다.
+        xs = [segment[0] for segment in regions['segments']]
+        regions['phase_segments'] = xs
+        regions['phase_middle'] = len(xs) // 2
 
     def get_segments(self, row):
         '''왼쪽에서 오른쪽으로 칸마다 (x, 그 칸이 켜지는 dB, 색, 반쯤 켠 색).'''
@@ -672,7 +679,9 @@ class MeterView(wx.Panel):
             width, height = dc.GetTextExtent(text)
             left = x + 3 if index == 0 else x - width - 3 if index == last else x - width // 2
             dc.DrawText(text, left, bottom - height - 2)
-        for db in SPECTRUM_DBS[:-1]:
+        # 키가 낮아 글씨 줄 사이가 16 보다 좁으면 한 줄 걸러 단다(0, -24, -48, -72).
+        step = 2 if self.db_y(inner, -12) - self.db_y(inner, 0) < 16 else 1
+        for db in SPECTRUM_DBS[:-1][::step]:
             y = round(self.db_y(inner, db))
             text = str(db)
             width, height = dc.GetTextExtent(text)
@@ -704,13 +713,17 @@ class MeterView(wx.Panel):
         draw_text(gc, 'R', cx + radius * 0.7 + 2, cy - radius * 0.7 - 4, 7, RACK['lcd_text'])
 
     def draw_phase_ground(self, gc, regions):
-        '''위상 상관(-1 … +1)과 좌우 균형(L 6 dB … R 6 dB). 레벨 막대와 같은 자리의 가는 길,
-        가운데 금 하나, 양 끝 금.'''
+        '''위상 상관(-1 … +1)과 좌우 균형(L 6 dB … R 6 dB). 레벨 막대와 같은 칸, 꺼진 칸은
+        옅게, 가운데(0) 칸 위아래로 금 하나.'''
+        xs = regions['phase_segments']
+        off = mix(LOW, RACK['lcd'], SEGMENT_OFF)
+        middle = xs[regions['phase_middle']]
         for key in ('correlation', 'balance'):
             bar = regions[key]
-            fill_rect(gc, RACK['lcd_grid'], bar.x, bar.y, bar.width, bar.height)
-            for x in (bar.x, bar.x + bar.width // 2, bar.x + bar.width - 1):
-                fill_rect(gc, RACK['lcd_axis'], x, bar.y - 2, 1, bar.height + 4)
+            for x in xs:
+                fill_rect(gc, off, x, bar.y, SEGMENT, bar.height)
+            fill_rect(gc, RACK['lcd_axis'], middle, bar.y - 2, SEGMENT, 2)
+            fill_rect(gc, RACK['lcd_axis'], middle, bar.y + bar.height, SEGMENT, 2)
 
     def get_bars_inner(self, rect):
         return wx.Rect(rect.x + LCD_PAD, rect.y + 6, rect.width - LCD_PAD * 2, rect.height - 12)
@@ -881,7 +894,11 @@ class MeterView(wx.Panel):
         self.draw_bars(dc)
         if 'spectrum' not in self.regions:
             return
-        if self.spectrum is None:
+        # 곡선과 피크 선이 모두 바닥이면(무음) 그리지 않는다. 바닥에 한 줄이 남아 보였다.
+        silent = (self.spectrum is not None and self.spectrum[1].max() <= SPECTRUM_FLOOR and
+                  (self.spectrum_hold is None or
+                   self.spectrum_hold[0].max() <= SPECTRUM_FLOOR))
+        if self.spectrum is None or silent:
             self.draw_spectrum_labels(dc, self.get_spectrum_inner(self.regions['spectrum']))
             return
         rect = self.regions['spectrum']
@@ -961,22 +978,23 @@ class MeterView(wx.Panel):
         dc.SetPen(wx.TRANSPARENT_PEN)
         dc.SetFont(get_mono(7.5))
         for key, ratio, value, tone in (
-                ('correlation', (self.correlation + 1) / 2, '%+.2f' % self.correlation,
+                ('correlation', (self.correlation + 1) / 2,
+                 '%+.2f' % self.correlation if abs(self.correlation) >= 0.005 else '0.00',
                  LOW if self.correlation >= 0 else MID),
                 ('balance', 0.5 + max(-1.0, min(1.0, self.balance / BALANCE_RANGE)) / 2,
                  '%+.1f' % -self.balance if abs(self.balance) >= 0.05 else '0.0', LOW)):
             bar = regions[key]
-            # 가운데 금(draw_phase_ground)과 같은 정수 x 에서 잰다. 따로 반올림하면 0 일 때
-            # 표시가 금에서 한 칸 비켜 섰다(사용자).
-            middle = bar.x + bar.width // 2
-            x = middle + round((ratio - 0.5) * bar.width)
-            x = min(max(x, bar.x), bar.x + bar.width - 1)
-            if x != middle:
-                dc.SetBrush(get_brush(mix(tone, RACK['lcd'], 0.55).GetAsString(
-                    wx.C2S_HTML_SYNTAX)))
-                dc.DrawRectangle(min(x, middle), bar.y, abs(x - middle), bar.height)
-            dc.SetBrush(get_brush(tone))
-            dc.DrawRectangle(x - 1, bar.y - 2, 3, bar.height + 4)
+            # 가운데 칸에서 값 쪽으로 칸을 켜고, 끝 칸은 밝게(예전 표시 자리).
+            xs = regions['phase_segments']
+            centre = regions['phase_middle']
+            reach = round((ratio - 0.5) * 2 * centre)
+            end = min(max(centre + reach, 0), len(xs) - 1)
+            low, high = min(centre, end), max(centre, end)
+            dc.DrawRectangleList([(x, bar.y, SEGMENT, bar.height) for x in xs[low:high + 1]],
+                                 pens=wx.TRANSPARENT_PEN, brushes=get_brush(tone))
+            bright = mix(tone, '#ffffff', 0.45).GetAsString(wx.C2S_HTML_SYNTAX)
+            dc.SetBrush(get_brush(bright))
+            dc.DrawRectangle(xs[end], bar.y - 1, SEGMENT, bar.height + 2)
             box = regions['phase_boxes'][key]
             dc.SetTextForeground(wx.Colour(RACK['text']))
             width, height = dc.GetTextExtent(value)
@@ -1019,6 +1037,8 @@ class MeterView(wx.Panel):
         # 소리가 없고 모든 계기가 바닥에 닿았으면 같은 그림을 다시 그리지 않는다.
         quiet = (max(peaks) == 0.0 and max(self.peak) <= FLOOR and max(self.hold) <= FLOOR and
                  (self.spectrum is None or self.spectrum[1].max() <= SPECTRUM_FLOOR) and
+                 # 피크 선이 바닥까지 내려온 뒤에야 멈춘다. 곡선만 보면 피크 선이 남은 채 굳었다.
+                 (self.spectrum_hold is None or self.spectrum_hold[0].max() <= SPECTRUM_FLOOR) and
                  (self.bars is None or self.bars.max() < 1e-3) and
                  abs(self.correlation) < 0.005 and abs(self.balance) < 0.05)
         if quiet and self.drawn_quiet:
