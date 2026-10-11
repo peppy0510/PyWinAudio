@@ -64,15 +64,19 @@ TOP = 0
 # 가는 금으로 나뉘어 쌓이고, 이름 띠의 토글 단추로 구역마다 보이고 숨긴다. 차례는 미터,
 # 막대 띠, 분석기(사용자 지정). 화면 테두리는 판 가장자리·띠 아래 금에서 TIGHT_PAD.
 # 화면 안 차례이자 토글 단추 차례. 분석기는 맨 아래(사용자).
-PARTS = ('level', 'spectrum')
+# 오실로스코프와 스펙트로그램은 그다음(사용자 요청 10/11).
+PARTS = ('level', 'spectrum', 'oscilloscope', 'spectrogram')
 # 판 이름. OUTPUT 이라 하면 끄면 소리가 안 나갈 것처럼 읽혀(사용자) 재는 판임을 드러낸다.
 TITLE = 'Analyzer'
 # 'level' 구역에는 레벨·스코프·막대 띠·상관·균형이 다 있어 LEVEL 은 이름이 좁다(사용자).
-PART_LABELS = {'level': 'METERS', 'spectrum': 'SPECTRUM'}
+PART_LABELS = {'level': 'METERS', 'spectrum': 'SPECTRUM', 'oscilloscope': 'SCOPE',
+               'spectrogram': 'SPECTROGRAM'}
 # LEVEL 구역: 왼쪽 정사각 벡터스코프, 오른쪽에 L·R / 눈금 / M·S·I / 상관·균형 줄(사용자).
 # 막대 띠는 낮게(사용자: 높으면 보기 싫다 → 40 은 작다 → 52 는 조금 크다 → 46). 위상도 110 → 96.
 # 두 구역 키는 같게(사용자).
-PART_BODIES = {'level': 118, 'spectrum': 118}
+# 창이 좁아 칩이 PIN 에 닿으면 쓰는 짧은 이름.
+SHORT_LABELS = {'level': 'METERS', 'spectrum': 'SPEC', 'oscilloscope': 'SCOPE', 'spectrogram': 'GRAM'}
+PART_BODIES = {'level': 118, 'spectrum': 118, 'oscilloscope': 118, 'spectrogram': 118}
 LCD_PAD = 8
 PIN = 18
 PIN_WIDTH = 30
@@ -94,6 +98,17 @@ PEAK_LINE_FALL = 12.0
 SPECTRUM_FREQS = (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
 SPECTRUM_DBS = (0, -12, -24, -36, -48, -60, -72, -84)
 SCOPE_SAMPLES = 1536
+
+# 오실로스코프: 스펙트로그램과 같은 시간축(사용자) — 한 장마다 오른쪽에 한 열, 그 장 사이 표본의
+# 가장 높은·낮은 값(옅게)과 RMS(밝게). 40 ms 파형은 믹스된 음악에서 잡음처럼만 보였다. 크기는 고정
+# (위아래 끝 = 0 dBFS)이라 시간에 따른 세기를 그대로 읽는다.
+# 스펙트로그램: 한 장마다 오른쪽에 한 줄을 붙이고 왼쪽으로 민다. 세로는 분석기와 같은 로그
+# 주파수, 같은 기울기. 색은 바탕 → 짙은 파랑 → 파랑 → 흰빛 → 주황(초록 없음 — 사용자 색각).
+GRAM_LOW = -84.0
+GRAM_HIGH = -12.0
+GRAM_STOPS = ((0.0, '#111215'), (0.30, '#16306a'), (0.58, '#4c9aff'), (0.80, '#dfe9ff'),
+              (0.92, '#ffb04d'), (1.0, '#ff7a33'))
+GRAM_FREQS = (100, 1000, 10000)
 
 # PyMusicPlayer 의 스펙트럼(playbox.PlayBoxSpectrum · audio.get_stream_spectrum_vectorscope)을
 # 그대로 옮긴 것. 75 ms 를 10 Hz 칸으로 풀고, 반음마다 막대 하나를 가운데에서 위아래로 세운다.
@@ -267,6 +282,12 @@ class MeterView(wx.Panel):
         self.scope = None
         self.scope_glow = None
         self.scope_gain = 1.0
+        self.wave = None
+        self.wave_dark = 0
+        self.gram = None
+        self.gram_rows = None
+        self.gram_dark = 0
+        self.frame_power = None
         self.correlation = 0.0
         self.balance = 0.0
         self.regions = {}
@@ -328,6 +349,10 @@ class MeterView(wx.Panel):
         elif name == 'level':
             self.scope = self.scope_glow = None
             self.bars = None
+        elif name == 'oscilloscope':
+            self.wave = None
+        elif name == 'spectrogram':
+            self.gram = None
         self.on_height()
         self.Refresh()
         self.on_change()
@@ -379,6 +404,8 @@ class MeterView(wx.Panel):
         self.scope = None
         self.scope_glow = None
         self.scope_gain = 1.0
+        self.wave = None
+        self.gram = None
         self.correlation = 0.0
         self.balance = 0.0
         self.autogain = AUTOGAIN_DEFAULT
@@ -428,11 +455,16 @@ class MeterView(wx.Panel):
                    'clips': [], 'chips': {}}
         dc = wx.ScreenDC()
         dc.SetFont(get_font(TITLE_SIZE, bold=True))
-        x = left + FOLD + 22 + dc.GetTextExtent(TITLE.upper())[0] + 14
-        for name in PARTS:
-            chip = self.get_chip_width(PART_LABELS[name])
-            regions['chips'][name] = wx.Rect(x, middle - CHIP_HEIGHT // 2, chip, CHIP_HEIGHT)
-            x += chip + CHIP_GAP
+        start = left + FOLD + 22 + dc.GetTextExtent(TITLE.upper())[0] + 14
+        for labels in (PART_LABELS, SHORT_LABELS):
+            x = start
+            for name in PARTS:
+                chip = self.get_chip_width(labels[name])
+                regions['chips'][name] = wx.Rect(x, middle - CHIP_HEIGHT // 2, chip, CHIP_HEIGHT)
+                x += chip + CHIP_GAP
+            regions['chip_labels'] = labels
+            if x - CHIP_GAP <= regions['pin'].x - 8:
+                break
         regions['chips_end'] = x - CHIP_GAP
         self.regions = regions
         shown = [name for name in PARTS if not self.parts[name]]
@@ -455,8 +487,9 @@ class MeterView(wx.Panel):
             height = PART_BODIES[name] - trim
             sections[name] = wx.Rect(body.x, y, body.width, height)
             y += height
-        if 'spectrum' in sections:
-            regions['spectrum'] = sections['spectrum']
+        for name in ('spectrum', 'oscilloscope', 'spectrogram'):
+            if name in sections:
+                regions[name] = sections[name]
         if 'level' in sections:
             # 레벨 구역 왼쪽에 정사각 벡터스코프, 가는 세로 금, 그 오른쪽에 미터(사용자).
             # 막대 왼쪽(스코프·이름)과 오른쪽(숫자) 자리는 언제나 같은 폭 — 막대가 화면
@@ -581,7 +614,7 @@ class MeterView(wx.Panel):
         self.draw_pin(gc, regions['pin'], accent)
         draw_title(gc, power.x + 22, plate.y, TITLE, '', RACK['dim'], plate.width // 2)
         for name, chip in regions['chips'].items():
-            draw_chip(gc, chip, PART_LABELS[name], not self.parts[name])
+            draw_chip(gc, chip, regions['chip_labels'][name], not self.parts[name])
         if 'screen' in regions:
             draw_lcd(gc, regions['screen'])
             for divider in regions['dividers']:
@@ -590,6 +623,8 @@ class MeterView(wx.Panel):
             self.draw_level_ground(gc, regions)
         if 'spectrum' in regions:
             self.draw_spectrum_ground(gc, regions)
+        if 'oscilloscope' in regions:
+            self.draw_wave_ground(gc, regions)
         if 'strip' in regions:
             self.draw_strip_ground(gc, regions)
         if 'scope' in regions:
@@ -660,6 +695,32 @@ class MeterView(wx.Panel):
             y = round(self.db_y(inner, db))
             fill_rect(gc, RACK['lcd_axis'] if db == 0 else RACK['lcd_grid'], inner.x, y,
                       inner.width, 1)
+
+    def get_wave_inner(self, rect):
+        return wx.Rect(rect.x + LCD_PAD, rect.y + LCD_PAD, rect.width - LCD_PAD * 2,
+                       rect.height - LCD_PAD * 2)
+
+    def draw_wave_ground(self, gc, regions):
+        '''가운데 0 줄은 밝게, 반 크기(-6 dBFS) 줄은 격자 색.'''
+        inner = self.get_wave_inner(regions['oscilloscope'])
+        for y in (inner.y + inner.height // 4, inner.y + inner.height * 3 // 4):
+            fill_rect(gc, RACK['lcd_grid'], inner.x, y, inner.width, 1)
+        fill_rect(gc, RACK['lcd_axis'], inner.x, inner.y + inner.height // 2, inner.width, 1)
+
+    def draw_gram_labels(self, dc, inner):
+        dc.SetFont(get_font(6.5))
+        dc.SetTextForeground(wx.Colour(RACK['lcd_text']))
+        for freq in GRAM_FREQS:
+            y = round(self.gram_y(inner, freq))
+            text = get_short_hz(freq)
+            width, height = dc.GetTextExtent(text)
+            # 왼쪽(가장 오래된 쪽)에 둔다. 오른쪽에 두면 막 들어온 소리를 가렸다.
+            dc.DrawText(text, inner.x + 4, y - height // 2)
+
+    def gram_y(self, inner, freq):
+        '''스펙트로그램 세로 자리. 아래가 20 Hz, 위가 20 kHz.'''
+        ratio = math.log(min(max(freq, 20.0), 20000.0) / 20.0) / math.log(1000.0)
+        return inner.y + inner.height - 1 - (inner.height - 1) * ratio
 
     def draw_spectrum_labels(self, dc, inner):
         '''눈금 글씨는 그래프 안에 얹는다 — Hz 는 아래 끝 줄, dB 는 오른쪽 끝 줄. 바깥에 글씨
@@ -803,7 +864,45 @@ class MeterView(wx.Panel):
         self.draw_levels(dc)
         self.draw_spectrum(dc)
         self.draw_scope(dc)
+        self.draw_wave(dc)
+        self.draw_gram(dc)
         self.draw_status(dc)
+
+    def draw_wave(self, dc):
+        if 'oscilloscope' not in self.regions:
+            return
+        inner = self.get_wave_inner(self.regions['oscilloscope'])
+        if self.wave is None or self.wave.shape[1] != inner.width:
+            return
+        # 열마다 GDI 금을 그으면 3 ms 가 든다. 열마다 칠한 그림 한 장을 붙인다.
+        height = inner.height
+        middle = height / 2
+        high, low, rms = self.wave
+        rows = numpy.arange(height)[:, None]
+        top = numpy.floor(middle - numpy.clip(high, -1, 1) * (middle - 1))[None, :]
+        bottom = numpy.ceil(middle - numpy.clip(low, -1, 1) * (middle - 1))[None, :]
+        reach = numpy.clip(rms, 0, 1) * (middle - 1)
+        inside = (rows >= numpy.floor(middle - reach)[None, :]) & (rows <= numpy.ceil(middle + reach)[None, :])
+        peak, body = self.get_wave_colour()
+        image = numpy.zeros((height, inner.width, 4), dtype='uint8')
+        image[(rows >= top) & (rows <= bottom)] = peak
+        image[inside & (reach[None, :] > 0.5)] = body
+        dc.DrawBitmap(wx.Bitmap.FromBufferRGBA(inner.width, height, image.tobytes()), inner.x, inner.y)
+
+    def get_wave_colour(self):
+        if getattr(self, 'wave_colour', None) is None:
+            self.wave_colour = (list(wx.Colour(mix(LOW, RACK['lcd'], 0.45)).Get()[:3]) + [255],
+                                list(wx.Colour(mix(LOW, '#ffffff', 0.35)).Get()[:3]) + [255])
+        return self.wave_colour
+
+    def draw_gram(self, dc):
+        if 'spectrogram' not in self.regions:
+            return
+        inner = self.get_spectrum_inner(self.regions['spectrogram'])
+        if self.gram is not None and self.gram.shape[:2] == (inner.height, inner.width):
+            height, width = self.gram.shape[:2]
+            dc.DrawBitmap(wx.Bitmap.FromBuffer(width, height, self.gram.tobytes()), inner.x, inner.y)
+        self.draw_gram_labels(dc, inner)
 
     def draw_status(self, dc):
         plate = self.regions['plate']
@@ -1028,15 +1127,21 @@ class MeterView(wx.Panel):
         if now - self.loudness_at > LOUDNESS_EVERY or self.loudness is None:
             self.loudness_at = now
             self.loudness = self.capture.take_loudness()
+        self.frame_power = None
         self.update_spectrum(recent, elapsed)
         self.update_scope(recent[-SCOPE_SAMPLES:])
+        self.update_wave(recent, elapsed)
+        self.update_gram(recent)
         # 소리가 없고 모든 계기가 바닥에 닿았으면 같은 그림을 다시 그리지 않는다.
         quiet = (max(peaks) == 0.0 and max(self.peak) <= FLOOR and max(self.hold) <= FLOOR and
                  (self.spectrum is None or self.spectrum[1].max() <= SPECTRUM_FLOOR) and
                  # 피크 선이 바닥까지 내려온 뒤에야 멈춘다. 곡선만 보면 피크 선이 남은 채 굳었다.
                  (self.spectrum_hold is None or self.spectrum_hold[0].max() <= SPECTRUM_FLOOR) and
                  (self.bars is None or self.bars.max() < 1e-3) and
-                 abs(self.correlation) < 0.005 and abs(self.balance) < 0.05)
+                 abs(self.correlation) < 0.005 and abs(self.balance) < 0.05 and
+                 # 스펙트로그램은 지난 소리가 왼쪽 끝으로 다 밀려 나갈 때까지 흐른다.
+                 (self.gram is None or self.gram_dark >= self.gram.shape[1]) and
+                 (self.wave is None or self.wave_dark >= self.wave.shape[1]))
         if quiet and self.drawn_quiet:
             return
         self.drawn_quiet = quiet
@@ -1095,8 +1200,7 @@ class MeterView(wx.Panel):
         inner = self.get_spectrum_inner(self.regions['spectrum'])
         if inner.width < 8:
             return
-        mono = recent.mean(axis=1) * self.window
-        power = (numpy.abs(numpy.fft.rfft(mono)) * (4.0 / FFT_SIZE)) ** 2
+        power = self.get_frame_power(recent)
         freqs = numpy.fft.rfftfreq(FFT_SIZE, 1.0 / RATE)
         columns = max(32, inner.width // 2)
         edges = 20.0 * numpy.power(1000.0, numpy.linspace(0, 1, columns + 1))
@@ -1128,6 +1232,81 @@ class MeterView(wx.Panel):
             self.spectrum_hold = (values.copy(), numpy.full(columns, time.perf_counter()))
         xs = numpy.array([self.freq_x(inner, freq) for freq in centres])
         self.spectrum = (xs, values)
+
+    def get_frame_power(self, recent):
+        '''이 장의 8192 점 파워. 분석기와 스펙트로그램이 함께 쓴다.'''
+        if self.frame_power is None:
+            mono = recent.mean(axis=1) * self.window
+            self.frame_power = (numpy.abs(numpy.fft.rfft(mono)) * (4.0 / FFT_SIZE)) ** 2
+        return self.frame_power
+
+    def update_wave(self, recent, elapsed):
+        '''지난 장 이후 들어온 만큼(약 1/30 초)의 가장 높은·낮은 값과 RMS 를 한 열로. 스펙트로그램과
+        같은 장에서 같이 한 칸 밀어 두 칸의 같은 세로 줄이 같은 순간이다.'''
+        if 'oscilloscope' not in self.regions:
+            return
+        width = self.get_wave_inner(self.regions['oscilloscope']).width
+        if width < 4:
+            return
+        if self.wave is None or self.wave.shape[1] != width:
+            self.wave = numpy.zeros((3, width))
+            self.wave_dark = width
+        count = min(len(recent), max(1, int(round(elapsed * RATE))))
+        mono = recent[-count:].mean(axis=1)
+        column = (float(mono.max()), float(mono.min()), float(numpy.sqrt((mono ** 2).mean())))
+        self.wave[:, :-1] = self.wave[:, 1:]
+        self.wave[:, -1] = column
+        self.wave_dark = self.wave_dark + 1 if max(abs(column[0]), abs(column[1])) < 1e-4 else 0
+
+    def get_gram_colours(self):
+        if getattr(self, 'gram_colours', None) is None:
+            stops = [(at, numpy.array(wx.Colour(tone).Get()[:3], dtype='float64'))
+                     for at, tone in GRAM_STOPS]
+            table = numpy.zeros((256, 3), dtype='uint8')
+            for index in range(256):
+                ratio = index / 255
+                for (a, ca), (b, cb) in zip(stops, stops[1:]):
+                    if ratio <= b:
+                        table[index] = ca + (cb - ca) * ((ratio - a) / max(b - a, 1e-9))
+                        break
+            self.gram_colours = table
+        return self.gram_colours
+
+    def update_gram(self, recent):
+        if 'spectrogram' not in self.regions:
+            return
+        inner = self.get_spectrum_inner(self.regions['spectrogram'])
+        height, width = inner.height, inner.width
+        if height < 4 or width < 4:
+            return
+        colours = self.get_gram_colours()
+        if self.gram is None or self.gram.shape[:2] != (height, width):
+            self.gram = numpy.empty((height, width, 3), dtype='uint8')
+            self.gram[:] = colours[0]
+            self.gram_dark = width
+        if self.gram_rows is None or self.gram_rows[0] != height:
+            # 줄마다 주파수 칸(위가 높은 소리). 분석기처럼 칸 평균, 좁은 저역은 이어 읽기.
+            freqs = numpy.fft.rfftfreq(FFT_SIZE, 1.0 / RATE)
+            edges = 20.0 * numpy.power(1000.0, numpy.linspace(0, 1, height + 1))[::-1]
+            highs, lows = edges[:-1], edges[1:]
+            centres = numpy.sqrt(highs * lows)
+            starts = numpy.minimum(numpy.searchsorted(freqs, lows), len(freqs) - 1)
+            stops = numpy.maximum(numpy.searchsorted(freqs, highs), starts + 1)
+            tilt = SPECTRUM_TILT * numpy.log2(centres / 1000.0)
+            self.gram_rows = (height, freqs, centres, starts, stops, tilt)
+        _, freqs, centres, starts, stops, tilt = self.gram_rows
+        power = self.get_frame_power(recent)
+        cumulative = numpy.concatenate(([0.0], numpy.cumsum(power)))
+        values = (cumulative[stops] - cumulative[starts]) / (stops - starts)
+        narrow = (stops - starts) <= 1
+        if narrow.any():
+            values[narrow] = numpy.interp(centres[narrow], freqs, power)
+        db = 10 * numpy.log10(numpy.maximum(values, 1e-12)) + tilt
+        level = numpy.clip((db - GRAM_LOW) / (GRAM_HIGH - GRAM_LOW), 0.0, 1.0)
+        index = (level * 255).astype(int)
+        self.gram[:, :-1] = self.gram[:, 1:]
+        self.gram[:, -1] = colours[index]
+        self.gram_dark = self.gram_dark + 1 if index.max() == 0 else 0
 
     def update_scope(self, block):
         left, right = block[:, 0], block[:, 1]
@@ -1248,6 +1427,8 @@ class MeterView(wx.Panel):
                'fold': 'Unfold to analyze' if self.folded else 'Fold to stop analyzing',
                'part:level': 'Show or hide the level meter, vectorscope, spectrum bars, correlation and balance',
                'part:spectrum': 'Show or hide the spectrum',
+               'part:oscilloscope': 'Show or hide the oscilloscope (same time axis as the spectrogram)',
+               'part:spectrogram': 'Show or hide the spectrogram',
                               'pin': 'Scroll with the rack' if self.pinned else 'Pin to the top'}.get(target, '')
         if tip != (self.GetToolTipText() or ''):
             self.SetToolTip(tip or None)
