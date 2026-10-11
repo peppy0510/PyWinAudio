@@ -828,7 +828,7 @@ class VstUnit(Unit):
                 self.get_short_name(item[0]),
                 lambda index=index: self.data['params'][index][1],
                 lambda value, index=index: self.put_param(index, value),
-                0.0, 1.0, self.get_default(index),
+                0.0, 1.0, lambda index=index: self.get_default(index),
                 lambda value, index=index: self.get_display(index, value)))
         self.visible = []
         self.extras = [self.edit, self.choose]
@@ -857,6 +857,13 @@ class VstUnit(Unit):
         return name.upper()
 
     def get_default(self, index):
+        '''플러그인이 갓 올라왔을 때의 값. 저장한 값을 되돌리기 전에 읽어 둔다 — 지금 값을 쓰면
+        두 번 눌러도 마지막에 쓴 값으로 돌아갔다(사용자).'''
+        # 저장해 둔 defaults 는 옛 빌드의 것일 수 있다. 플러그인을 올려 지금 빌드에게 묻는다.
+        self.ensure_plugin()
+        defaults = self.data.get('defaults') or []
+        if index < len(defaults):
+            return defaults[index]
         return self.data['params'][index][1]
 
     def get_title(self):
@@ -902,6 +909,7 @@ class VstUnit(Unit):
             return None
         self.data.pop('error', None)
         self.plugin = plugin
+        self.data['defaults'] = [round(plugin.get_value(index), 6) for index in range(plugin.count)]
         self.apply_state()
         self.read_state()
         return plugin

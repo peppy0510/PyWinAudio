@@ -345,7 +345,8 @@ class Knob(Control):
         self.origin = None
 
     def on_dclick(self, point):
-        self.put(self.default)
+        # 기본값을 그때 묻는 장치도 있다(VST: 플러그인을 올려 봐야 안다).
+        self.put(self.default() if callable(self.default) else self.default)
 
     def get_reach(self, gc, width):
         '''가운데에서 보이는 왼쪽 끝까지. 값 글씨는 바뀌어 넣지 않는다(놓인 자리가 춤춘다).'''

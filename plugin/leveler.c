@@ -163,10 +163,10 @@ static const char *PARAM_LABELS[PARAM_COUNT] = {
     "", "LUFS", "dB", "s", "", "S/M dB", "", "", "S/M dB", "", "dB"
 };
 /* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 스테레오 보정 켬, S/M -10 dB, 저역 모노 켬,
- * (폭 상한 S/M -6 dB), 모노 넓히기 켬, 목표 넓이 S/M -8 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지
- * 않는다), 리미터 켬, -1 dBFS. */
+ * (폭 상한 S/M -6 dB), 모노 넓히기 켬, 목표 넓이 S/M -7.5 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지
+ * 않는다 — 실측 진짜 스테레오 -6.5 보다 조금 좁게, 사용자), 리미터 켬, -1 dBFS. */
 static const float PARAM_DEFAULTS[PARAM_COUNT] = {
-    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.0f / 18.0f, 1.0f, 5.0f / 6.0f
+    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 1.0f, 5.0f / 6.0f
 };
 
 #define TARGET_LOW -24.0
@@ -204,6 +204,8 @@ static const float PARAM_DEFAULTS[PARAM_COUNT] = {
 #define FAST_TIME 0.001
 #define SLOW_TIME 0.05
 #define DUCK_RELEASE 0.03
+/* 모노 채움 계기의 평균 시간. 타격음 지킴이 줄인 것까지 넣어 실제로 섞인 양(띠 에너지 가중)을 보인다. */
+#define FILL_METER_TIME 1.0
 #define LOOKAHEAD_TIME 0.005
 #define RELEASE_TIME 0.08
 #define MAX_LOOKAHEAD 1024
@@ -220,7 +222,7 @@ typedef struct {
     float agc_db;           /* 지금 거는 AGC 이득 */
     float balance_db;       /* 좌우 보정(+ 면 왼쪽을 내림) */
     float side_db;          /* 폭 줄임(0 이하) */
-    float fill_db;          /* 모노 채움의 가짜 S 크기(M 대비 dB, 없으면 -120) */
+    float fill_db;          /* 실제로 섞인 가짜 S 크기(M 대비 dB, 1 초 평균, 없으면 -120) */
     float limiter_db;       /* 이 블록에서 리미터가 가장 깊게 줄인 값(0 이하) */
     float loudness;         /* 재고 있는 입력 라우드니스(LUFS) */
     int32_t sounding;
@@ -325,6 +327,9 @@ typedef struct {
     double fast_env, slow_env, duck;
     double fast_coef, slow_coef, duck_coef;
     double wide_mix;       /* 지금 섞고 있는 가짜 S 의 크기(M 대비 배율) */
+    /* 계기용: 실제로 섞인 가짜 S 배율(wide_mix × duck)의 제곱을 띠 M 에너지로 가중한 평균의 분자·분모 */
+    double fill_power, fill_weight;
+    double fill_coef;
 
     int lookahead;         /* 리미터가 내다보는 표본 수 */
     float delay[2][MAX_LOOKAHEAD];
@@ -520,6 +525,8 @@ static void reset(Leveler *self)
     self->fast_env = self->slow_env = 0.0;
     self->duck = 1.0;
     self->wide_mix = 0.0;
+    self->fill_power = self->fill_weight = 0.0;
+    self->fill_coef = 1.0 - exp(-1.0 / (self->rate * FILL_METER_TIME));
     memset(self->delay, 0, sizeof(self->delay));
     for (int index = 0; index < MAX_LOOKAHEAD; index++) {
         self->wanted[index] = 1.0f;
@@ -602,10 +609,11 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->side_power += (side * side - self->side_power) * c;
         }
         /* 모노 판정용 띠: 이득 앞 입력의 M·S 를 300 Hz–4 kHz 로 거른다. */
+        double band_mid;
         {
             double raw_mid = (inputs[0][n] + inputs[1][n]) * 0.5;
             double raw_side = (inputs[0][n] - inputs[1][n]) * 0.5;
-            double band_mid = run_biquad(&self->detect_low, 0, run_biquad(&self->detect_high, 0, raw_mid));
+            band_mid = run_biquad(&self->detect_low, 0, run_biquad(&self->detect_high, 0, raw_mid));
             double band_side = run_biquad(&self->detect_low, 1, run_biquad(&self->detect_high, 1, raw_side));
             if (sounding) {
                 double c = self->stereo_coef * pace;
@@ -635,6 +643,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         if (sounding || !mono_wide)
             self->wide_mix += (want_mix - self->wide_mix) *
                               self->follow_coef * (sounding ? pace : 1.0);
+        double mixed = 0.0;
         if (stereo || bass_mono || self->wide_mix > 1e-4) {
             left *= pow(10.0, -self->balance_db / 40.0);
             right *= pow(10.0, self->balance_db / 40.0);
@@ -661,7 +670,8 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
                 self->duck = TRANSIENT_DUCK;
             else
                 self->duck += (1.0 - self->duck) * self->duck_coef;
-            side += made * self->wide_mix * self->duck;
+            mixed = self->wide_mix * self->duck;
+            side += made * mixed;
             /* 저역 모노는 가짜 S 까지 더한 뒤에 — 150 Hz 고역 통과가 다 못 거른 낮은 S 도 걷는다. */
             if (bass_mono)
                 side = run_biquad(&self->bass, 0, side);
@@ -671,6 +681,14 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             /* 꺼져 있어도 지연선은 채워 둔다 — 켜는 순간 빈 소리가 섞이지 않게. */
             self->wide_delay[self->wide_head] = (float)((left + right) * 0.5);
             self->wide_head = (self->wide_head + 1) % MAX_WIDE_DELAY;
+        }
+
+        /* 계기는 wide_mix 만 보면 타격음 지킴이 줄인 만큼을 놓쳐 드럼 많은 곡에서 5 dB 크게 보였다.
+         * 지킴은 소리가 큰 순간에 걸리므로 시간 평균으로는 안 드러난다 — 띠 M 에너지로 가중한다. */
+        if (sounding || !mono_wide) {
+            double weight = band_mid * band_mid;
+            self->fill_power += (mixed * mixed * weight - self->fill_power) * self->fill_coef;
+            self->fill_weight += (weight - self->fill_weight) * self->fill_coef;
         }
 
         /* 리미터: 이 표본에 필요한 이득, 창 최솟값, 풀림, 상자 평균. */
@@ -726,7 +744,8 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         slot->agc_db = (float)self->gain_db;
         slot->balance_db = (float)self->balance_db;
         slot->side_db = (float)self->side_db;
-        slot->fill_db = self->wide_mix > 1e-6 ? (float)(20.0 * log10(self->wide_mix)) : -120.0f;
+        double fill = self->fill_weight > 1e-20 ? self->fill_power / self->fill_weight : 0.0;
+        slot->fill_db = fill > 1e-12 ? (float)(10.0 * log10(fill)) : -120.0f;
         slot->limiter_db = (float)(20.0 * log10(deepest > 1e-6 ? deepest : 1e-6));
         slot->loudness = (float)(-0.691 + 10.0 * log10(self->power + 1e-20));
         slot->sounding = any_sound;
