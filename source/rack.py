@@ -56,9 +56,10 @@ MIXER_REFRESH = 1000
 MIXER_FALL = 15.0
 WHEEL_STEP = 60
 # 스크롤바는 평소에 숨는다. 굴리거나 끌 때, 오른쪽 여백에 손이 갈 때만 가는 막대로 뜬다.
-# 색·모양은 PyWinAgent 의 막대 그대로(사용자): 폭 4, 모서리 2, 오른쪽 끝에서 3 안쪽, 어두운 테두리색.
+# 색·모양은 PyWinAgent 의 막대 그대로(사용자): 폭 4, 모서리 2, 어두운 테두리색. 자리는 오른쪽 여백의
+# 가운데 — 끝에서 3 안쪽이면 판 쪽 틈이 1 이라 판에 붙어 보였다(사용자).
 SCROLLBAR = 4
-SCROLLBAR_INSET = 3
+SCROLLBAR_INSET = (MARGIN - SCROLLBAR) // 2
 SCROLLBAR_COLOUR = '#3a3f46'
 SCROLL_MIN = 24
 # 굴리고 나면 0.7 초 머문 뒤 0.4 초에 걸쳐 옅어진다 — 처음엔 빠르게, 끝에서 늦게(PyWinAgent 와 같다).
