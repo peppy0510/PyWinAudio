@@ -184,20 +184,36 @@ def get_chip_width(gc, text):
     return int(math.ceil(gc.GetTextExtent(text.upper())[0])) + CHIP_PAD * 2
 
 
-def draw_chip(gc, rect, text, lit):
+def get_fill(lit, hovered, pressed, accent):
+    '''누를 수 있는 것의 바탕 한 규칙(사용자: 어떤 단추는 반응하고 어떤 건 안 했다). 꺼진 것은
+    올리면 한 단계 밝게·누르면 어둡게, 켜진 것은 제 색을 올리면 조금 밝게·누르면 조금 어둡게.'''
+    if lit:
+        if pressed:
+            return mix(accent, '#000000', 0.15)
+        if hovered:
+            return mix(accent, '#ffffff', 0.18)
+        return wx.Colour(accent)
+    if pressed:
+        return wx.Colour(RACK['button_down'])
+    if hovered:
+        return wx.Colour(RACK['button_hover'])
+    return wx.Colour(RACK['button'])
+
+
+def draw_chip(gc, rect, text, lit, hovered=False):
     '''평평한 글씨 칩. 켜져 있으면 CHIP_LIT, 꺼져 있으면 테두리만. 판 색을 따르지 않는다 —
-    Analyzer·Leveler 칩 색이 달라 보였다(사용자).'''
-    fill = CHIP_LIT if lit else RACK['button']
+    Analyzer·Leveler 칩 색이 달라 보였다(사용자). 누르는 순간 바뀌므로 눌림 표시는 없다.'''
+    fill = get_fill(lit, hovered, False, CHIP_LIT)
     gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
-    gc.SetBrush(wx.Brush(wx.Colour(fill)))
+    gc.SetBrush(wx.Brush(fill))
     gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
     draw_text(gc, text.upper(), rect.x + rect.width / 2, rect.y + rect.height / 2 - 5.5, CHIP_TEXT,
               '#101215' if lit else RACK['dim'], bold=True, align='center')
 
 
-def draw_led(gc, cx, cy, on, colour, radius=5.5):
-    '''켜고 끄기. LED 대신 전원 기호 — 켜지면 장치 색, 꺼지면 흐린 회색.'''
-    tone = colour if on else RACK['led_off']
+def draw_led(gc, cx, cy, on, colour, radius=5.5, off=None):
+    '''켜고 끄기. LED 대신 전원 기호 — 켜지면 장치 색, 꺼지면 흐린 회색(off 로 바꿀 수 있다).'''
+    tone = colour if on else (off or RACK['led_off'])
     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(tone)).Width(1.6).Cap(wx.CAP_ROUND)))
     gc.SetBrush(wx.TRANSPARENT_BRUSH)
     arc = gc.CreatePath()
@@ -459,10 +475,9 @@ class Switch(Control):
         draw_text(gc, label, cx, rect.y + (LABEL_SIZE - size), size, RACK['dim'], align='center')
         button = self.get_button()
         on = self.is_on() and self.enabled
-        lit = self.hovered or self.pressed
-        fill = accent if on else RACK['button_hover'] if lit else RACK['button']
+        fill = get_fill(on, self.hovered, self.pressed, accent)
         gc.SetPen(get_pen(gc, fill if on else RACK['button_edge'], 1))
-        gc.SetBrush(wx.Brush(wx.Colour(fill)))
+        gc.SetBrush(wx.Brush(fill))
         gc.DrawRoundedRectangle(button.x + 0.5, button.y + 0.5, button.width - 1,
                                 button.height - 1, 3)
         text = (self.text(self.get()) or ('ON' if on else 'OFF')).strip().upper()
@@ -586,14 +601,8 @@ class Button(Control):
         lit = self.active() if self.active else False
         if not self.enabled:
             fill = mix(RACK['button'], RACK['bg'], 0.5)
-        elif lit:
-            fill = accent
-        elif self.pressed:
-            fill = RACK['button_down']
-        elif self.hovered:
-            fill = RACK['button_hover']
         else:
-            fill = RACK['button']
+            fill = get_fill(lit, self.hovered, self.pressed, accent)
         gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
         gc.SetBrush(wx.Brush(wx.Colour(fill)))
         gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
@@ -628,7 +637,7 @@ class Chip(Control):
         pass
 
     def draw(self, gc, accent):
-        draw_chip(gc, self.rect, self.caption, self.active())
+        draw_chip(gc, self.rect, self.caption, self.active(), self.hovered)
 
 
 class IconButton(Button):
@@ -678,7 +687,16 @@ class Power(Control):
 
     def draw(self, gc, accent):
         rect = self.rect
-        draw_led(gc, rect.x + rect.width / 2, rect.y + rect.height / 2, self.get(), accent)
+        # 머리 띠의 다른 아이콘 단추(접기·옮기기·빼기)처럼 올리면 바탕 칸, 누르면 어둡게(사용자: 일관성).
+        if self.pressed or self.hovered:
+            box = wx.Rect(rect).Inflate(2, 2)
+            fill_rect(gc, RACK['button_down'] if self.pressed else RACK['button_hover'], box.x, box.y,
+                      box.width, box.height, 3)
+        on = self.get()
+        tone = mix(accent, '#ffffff', 0.18) if on and self.hovered else accent
+        draw_led(gc, rect.x + rect.width / 2, rect.y + rect.height / 2, on,
+                 tone.GetAsString(wx.C2S_HTML_SYNTAX) if isinstance(tone, wx.Colour) else tone,
+                 off=RACK['dim'] if self.hovered else None)
 
 
 class Segment(Control):

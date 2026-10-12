@@ -629,14 +629,19 @@ class MeterView(wx.Panel):
         # 이름 띠 — 랙의 장치와 같은 자리, 같은 글씨. 접어도 같다.
         draw_faceplate(gc, plate.x, plate.y, plate.width, plate.height, face, EAR, accent)
         power, fold = regions['icon'], regions['fold']
+        # 머리 띠 단추는 랙의 것과 같은 반응 — 올리면 바탕 칸과 밝은 글리프(사용자: 일관성).
+        hover = getattr(self, 'hover_target', None)
+        if hover == 'fold':
+            fill_rect(gc, RACK['button_hover'], fold.x, fold.y, fold.width, fold.height, 3)
         draw_glyph(gc, 'right' if self.folded else 'down', fold.x + fold.width / 2,
-                   fold.y + fold.height / 2, 10, RACK['dim'])
+                   fold.y + fold.height / 2, 10, RACK['text'] if hover == 'fold' else RACK['dim'])
         # 누르는 단추가 아닌 표시는 회색. 장치 색은 누를 수 있는 것(켜진 불·켜진 단추)에만.
         self.draw_icon(gc, power, RACK['dim'])
         self.draw_pin(gc, regions['pin'], accent)
         draw_title(gc, power.x + 22, plate.y, TITLE, '', RACK['dim'], plate.width // 2)
         for name, chip in regions['chips'].items():
-            draw_chip(gc, chip, regions['chip_labels'][name], not self.parts[name])
+            draw_chip(gc, chip, regions['chip_labels'][name], not self.parts[name],
+                      hover == 'part:' + name)
         if 'screen' in regions:
             draw_lcd(gc, regions['screen'])
             for divider in regions['dividers']:
@@ -664,7 +669,7 @@ class MeterView(wx.Panel):
             fill_rect(gc, accent, rect.x + 2 + index * 4, bottom - height, 2, height, 1)
 
     def draw_pin(self, gc, rect, accent):
-        draw_chip(gc, rect, 'PIN', self.pinned)
+        draw_chip(gc, rect, 'PIN', self.pinned, getattr(self, 'hover_target', None) == 'pin')
 
 
     def draw_level_ground(self, gc, regions):
@@ -872,7 +877,7 @@ class MeterView(wx.Panel):
             self.buffer = wx.Bitmap(max(1, width), max(1, height))
         dc = wx.BufferedPaintDC(self, self.buffer)
         key = (width, height, self.folded, self.pinned, self.right_margin,
-               tuple(self.parts.values()))
+               tuple(self.parts.values()), getattr(self, 'hover_target', None))
         if self.background is None or self.background_key != key:
             self.background = self.build_background(width, height)
             self.background_key = key
@@ -1431,7 +1436,19 @@ class MeterView(wx.Panel):
 
     def on_leave(self, event):
         self.set_hover(None)
+        self.set_hover_target(None)
         event.Skip()
+
+    def set_hover_target(self, target):
+        '''머리 띠 단추 위에 손이 오가면 띠만 다시 그린다.'''
+        if target in ('clip', 'integrated'):
+            target = None
+        if target == getattr(self, 'hover_target', None):
+            return
+        self.hover_target = target
+        plate = self.regions.get('plate')
+        if plate is not None:
+            self.RefreshRect(wx.Rect(plate.x, plate.y, plate.width, FOLDED), False)
 
     def set_hover(self, x):
         if x == self.hover:
@@ -1447,6 +1464,7 @@ class MeterView(wx.Panel):
                   self.get_spectrum_inner(spectrum).Contains(point))
         self.set_hover(point.x if inside else None)
         target = self.hit(point)
+        self.set_hover_target(target)
         self.SetCursor(wx.Cursor(wx.CURSOR_HAND if target else wx.CURSOR_ARROW))
         tip = {'clip': 'Click to reset',
                'integrated': 'Integrated loudness. Click to start over',
