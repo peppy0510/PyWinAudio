@@ -1285,8 +1285,15 @@ class MeterView(wx.Panel):
         if width < 4:
             return
         if self.wave is None or self.wave.shape[1] != width:
-            self.wave = numpy.zeros((3, width))
-            self.wave_dark = width
+            # 스펙트로그램과 같게 — 크기가 바뀌어도 최근 기록을 오른쪽에 옮겨 담는다.
+            fresh = numpy.zeros((3, width))
+            if self.wave is not None:
+                keep = min(width, self.wave.shape[1])
+                fresh[:, width - keep:] = self.wave[:, self.wave.shape[1] - keep:]
+                self.wave_dark = 0
+            else:
+                self.wave_dark = width
+            self.wave = fresh
         count = min(len(recent), max(1, int(round(elapsed * RATE))))
         mono = recent[-count:].mean(axis=1)
         column = (float(mono.max()), float(mono.min()), float(numpy.sqrt((mono ** 2).mean())))
@@ -1317,9 +1324,19 @@ class MeterView(wx.Panel):
             return
         colours = self.get_gram_colours()
         if self.gram is None or self.gram.shape[:2] != (height, width):
-            self.gram = numpy.empty((height, width, 3), dtype='uint8')
-            self.gram[:] = colours[0]
-            self.gram_dark = width
+            # 창 크기가 바뀌어도 지난 기록을 버리지 않는다(사용자) — 가장 최근 쪽부터 오른쪽에 옮겨 담고,
+            # 키가 달라졌으면 줄을 가까운 것으로 다시 고른다.
+            fresh = numpy.empty((height, width, 3), dtype='uint8')
+            fresh[:] = colours[0]
+            old = self.gram
+            if old is not None and old.size:
+                rows = numpy.minimum((numpy.arange(height) * old.shape[0]) // height, old.shape[0] - 1)
+                keep = min(width, old.shape[1])
+                fresh[:, width - keep:] = old[rows][:, old.shape[1] - keep:]
+                self.gram_dark = 0 if keep else width
+            else:
+                self.gram_dark = width
+            self.gram = fresh
         if self.gram_rows is None or self.gram_rows[0] != height:
             # 줄마다 주파수 칸(위가 높은 소리). 분석기처럼 칸 평균, 좁은 저역은 이어 읽기.
             freqs = numpy.fft.rfftfreq(FFT_SIZE, 1.0 / RATE)

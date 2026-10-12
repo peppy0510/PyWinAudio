@@ -790,9 +790,11 @@ class VstUnit(Unit):
     METER_ROW = 26
     METER_CELL = 112
     METER_GAP = 16
+    # 모노 채움은 대역마다(150–600 Hz·600 Hz–3 kHz·3 kHz 위 — 사용자), 위상은 맞춘 시간(± ms)과 극성.
     METERS = (('agc', 'AGC', -12.0, 18.0, True), ('balance', 'BALANCE', -6.0, 6.0, True),
-              ('side', 'WIDTH CUT', -6.0, 0.0, False), ('fill', 'MONO FILL', -30.0, 0.0, False),
-              ('limiter', 'LIMITER', -12.0, 0.0, False))
+              ('side', 'WIDTH CUT', -6.0, 0.0, False), ('phase', 'PHASE', -2.0, 2.0, True),
+              ('fill_low', 'FILL LOW', -30.0, 0.0, False), ('fill_mid', 'FILL MID', -30.0, 0.0, False),
+              ('fill_high', 'FILL HIGH', -30.0, 0.0, False), ('limiter', 'LIMITER', -12.0, 0.0, False))
     LIMITER_FALL = 12.0
     meter_values = None
     meter_rect = None
@@ -1054,11 +1056,15 @@ class VstUnit(Unit):
             x = rect.x + column * (width + gap)
             top = rect.y + row * (self.METER_ROW + self.RULE_GAP)
             draw_text(gc, label, x, top, 7, RACK['dim'], bold=True)
-            value = None if values is None else values['limiter_hold' if key == 'limiter' else key]
+            value = None if values is None else values.get('limiter_hold' if key == 'limiter' else key)
+            fill = key.startswith('fill')
             if value is None:
                 text = '--'
-            elif key == 'fill' and value <= low:
+            elif fill and value <= low:
                 text = 'off'
+            elif key == 'phase':
+                delay = '' if abs(value) < 0.05 else '%+.1f ms' % value
+                text = ('INV ' + delay).strip() if values.get('phase_flip') else (delay or 'OK')
             else:
                 shown = 0.0 if abs(value) < 0.05 else value  # '-0.0' 이 뜨지 않게
                 text = '%+.1f dB' % shown if bipolar else '%.1f dB' % min(0.0, shown)
@@ -1067,10 +1073,10 @@ class VstUnit(Unit):
             bar = wx.Rect(int(x), top + 17, int(width), 5)
             fill_rect(gc, RACK['track'], bar.x, bar.y, bar.width, bar.height, 2)
             zero = bar.x + bar.width * (0.0 - low) / (high - low)
-            if value is not None and not (key == 'fill' and value <= low):
+            if value is not None and not (fill and value <= low):
                 v = min(max(value, low), high)
                 at = bar.x + bar.width * (v - low) / (high - low)
-                if key == 'fill':
+                if fill:
                     left, right = bar.x, at
                 else:
                     left, right = min(at, zero), max(at, zero)

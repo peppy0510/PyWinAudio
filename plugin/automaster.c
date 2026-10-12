@@ -146,6 +146,7 @@ enum {
     P_MAX_GAIN,
     P_SPEED,
     P_BALANCE,
+    P_PHASE_FIX,
     P_WIDTH_LIMIT,
     P_WIDTH,
     P_BASS_MONO,
@@ -158,30 +159,30 @@ enum {
 };
 
 static const char *PARAM_NAMES[PARAM_COUNT] = {
-    "AGC", "Target", "Max Gain", "Speed", "Balance", "Width Limit", "Max Width", "Bass Mono",
-    "Mono Wide", "Wide Target", "Air", "Limiter", "Ceiling"
+    "AGC", "Target", "Max Gain", "Speed", "Balance", "Phase Fix", "Width Limit", "Max Width",
+    "Bass Mono", "Mono Wide", "Wide Target", "Air", "Limiter", "Ceiling"
 };
 /* 구역: 1 AGC, 2 Stereo, 3 Limiter. 랙이 구역 사이에 금을 긋는다.
  * 예전 Stereo 하나가 좌우 균형과 폭 상한을 함께 켜고 꺼서, 스테레오 처리가 다 꺼지는 것처럼 읽혔다 —
  * Balance·Width Limit 둘로 나눴다(사용자). 랙은 저장된 Stereo 값을 둘에 옮긴다. */
-static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3};
+static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3};
 static const char *CATEGORY_LABELS[4] = {"", "AGC", "Stereo", "Limiter"};
 static const char *PARAM_LABELS[PARAM_COUNT] = {
-    "", "LUFS", "dB", "s", "", "", "S/M dB", "", "", "S/M dB", "dB", "", "dB"
+    "", "LUFS", "dB", "s", "", "", "", "S/M dB", "", "", "S/M dB", "dB", "", "dB"
 };
 /* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 좌우 균형 켬, 폭 상한 켬(S/M -6 dB), 저역 모노 켬,
  * 모노 넓히기 켬, 목표 넓이 S/M -7.5 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지 않는다 —
  * 실측 진짜 스테레오 -6.5 보다 조금 좁게, 사용자), 고역 몫(Air) +2 dB(3 대역 전과 같은 소리),
- * 리미터 켬, -1 dBFS. */
+ * 위상 바로잡기 켬, 리미터 켬, -1 dBFS. */
 static const float PARAM_DEFAULTS[PARAM_COUNT] = {
-    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 8.0f / 12.0f, 1.0f,
-    5.0f / 6.0f
+    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 8.0f / 12.0f,
+    1.0f, 5.0f / 6.0f
 };
 
 static int is_switch(int32_t index)
 {
-    return index == P_AGC || index == P_BALANCE || index == P_WIDTH_LIMIT || index == P_BASS_MONO ||
-           index == P_MONO_WIDE || index == P_LIMITER;
+    return index == P_AGC || index == P_BALANCE || index == P_PHASE_FIX || index == P_WIDTH_LIMIT ||
+           index == P_BASS_MONO || index == P_MONO_WIDE || index == P_LIMITER;
 }
 
 #define TARGET_LOW -24.0
@@ -228,6 +229,23 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define DUCK_RELEASE 0.03
 /* 모노 채움 계기의 평균 시간. 타격음 지킴이 줄인 것까지 넣어 실제로 섞인 양(띠 에너지 가중)을 보인다. */
 #define FILL_METER_TIME 1.0
+/* 위상 바로잡기(Phase Fix): 입력 L·R 의 150 Hz–4 kHz 를 ±2 ms 상호상관으로 0.25 초마다 재고(약 1 초로
+ * 고르게), 가장 센 상관이 -0.5 아래면 R 의 극성을 뒤집고(-0.2 위로 오면 되돌림), 0 이 아닌 어긋남에서
+ * 상관이 0.85 이상이면서 어긋남 0 보다 0.08 넘게 높고 세 번 이어지면 앞선 쪽을 그만큼 늦춘다. 일부러
+ * 벌린 마이크의 진짜 스테레오는 두 채널이 그만큼 닮지 않아 건드리지 않는다. 바꿀 때는 20 ms 에 걸쳐. */
+#define PHASE_LOW_HZ 150.0
+#define PHASE_HIGH_HZ 4000.0
+#define PHASE_MAX_LAG 0.002
+#define PHASE_WINDOW 8192
+#define PHASE_EVERY 0.25
+#define PHASE_SMOOTH 0.3
+#define PHASE_FLIP -0.5
+#define PHASE_UNFLIP -0.2
+#define PHASE_MATCH 0.85
+#define PHASE_GAIN 0.08
+#define PHASE_STABLE 3
+#define PHASE_FADE 0.02
+#define MAX_LAG 512
 #define LOOKAHEAD_TIME 0.005
 #define RELEASE_TIME 0.08
 #define MAX_LOOKAHEAD 1024
@@ -235,7 +253,10 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 /* ------------------------------------------------------------ 계기(공유 메모리) */
 
 #define METER_MAGIC 0x4D415750 /* 'PWAM' */
-#define METER_VERSION 1
+/* 칸 배치가 바뀌면 이름도 바꾼다 — 옛 DLL 이 아직 도는 엔진이 같은 이름에 짧은 칸으로 만들어 둔
+ * 공유 메모리에 새 배치로 쓰면 넘친다. */
+#define METER_VERSION 2
+#define METER_NAME L"PyWinAudioAutoMaster.v2"
 #define METER_SLOTS 8
 
 typedef struct {
@@ -248,7 +269,9 @@ typedef struct {
     float limiter_db;       /* 이 블록에서 리미터가 가장 깊게 줄인 값(0 이하) */
     float loudness;         /* 재고 있는 입력 라우드니스(LUFS) */
     int32_t sounding;
-    int32_t reserved;
+    int32_t phase_flip;     /* R 극성을 뒤집고 있으면 1 */
+    float fill_band_db[3];  /* 대역마다 섞인 가짜 S(150–600 Hz·600 Hz–3 kHz·3 kHz 위) */
+    float phase_delay_ms;   /* 맞추느라 늦추고 있는 시간(+ 면 L 을, - 면 R 을) */
 } MeterSlot;
 
 typedef struct {
@@ -271,10 +294,10 @@ static MeterBlock *open_meters(void)
                                                               &descriptor, NULL))
         attributes.lpSecurityDescriptor = descriptor;
     HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0,
-                                        sizeof(MeterBlock), L"Global\\PyWinAudioAutoMaster");
+                                        sizeof(MeterBlock), L"Global\\" METER_NAME);
     if (mapping == NULL)
         mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0,
-                                     sizeof(MeterBlock), L"Local\\PyWinAudioAutoMaster");
+                                     sizeof(MeterBlock), L"Local\\" METER_NAME);
     if (descriptor != NULL)
         LocalFree(descriptor);
     if (mapping == NULL)
@@ -354,7 +377,22 @@ typedef struct {
     double wide_mix[BANDS];  /* 대역마다 지금 섞고 있는 가짜 S 의 크기(M 대비 배율) */
     /* 계기용: 실제로 섞인 가짜 S 배율(wide_mix × duck)의 제곱을 띠 M 에너지로 가중한 평균의 분자·분모 */
     double fill_power, fill_weight;
+    double fill_band_power[BANDS], fill_band_weight[BANDS];
     double fill_coef;
+
+    /* 위상 바로잡기 */
+    Biquad phase_band[2];        /* 판정용 150 Hz 고역·4 kHz 저역 통과(0 = L, 1 = R) */
+    float phase_l[PHASE_WINDOW], phase_r[PHASE_WINDOW];
+    float flat_l[PHASE_WINDOW], flat_r[PHASE_WINDOW];  /* 잴 때 창을 일자로 펴 둔 것(나머지 셈 없이) */
+    int phase_head, phase_tick, phase_every, max_lag;
+    double phase_score[2 * MAX_LAG + 1];
+    int flipped;
+    double flip_gain, fade_step;
+    int lag, candidate, candidate_count;  /* 지금 맞추고 있는 어긋남, 다음 후보와 이어진 횟수 */
+    int fade_from;                        /* 바꾸는 중이면 이전 어긋남 */
+    double fade;                          /* 0 → 1 */
+    float input_l[2 * MAX_LAG], input_r[2 * MAX_LAG];
+    int input_head;
 
     int lookahead;         /* 리미터가 내다보는 표본 수 */
     float delay[2][MAX_LOOKAHEAD];
@@ -486,6 +524,74 @@ static double run_biquad(Biquad *b, int channel, double x)
     return y;
 }
 
+/* 판정 창의 ±max_lag 상호상관을 재서 고르게 하고, 극성 뒤집기와 맞출 어긋남을 정한다. */
+static void estimate_phase(AutoMaster *self)
+{
+    int lags = self->max_lag;
+    int count = PHASE_WINDOW - 2 * lags;
+    int start = self->phase_head;  /* 가장 오래된 표본 */
+    int tail = PHASE_WINDOW - start;
+    memcpy(self->flat_l, self->phase_l + start, tail * sizeof(float));
+    memcpy(self->flat_l + tail, self->phase_l, start * sizeof(float));
+    memcpy(self->flat_r, self->phase_r + start, tail * sizeof(float));
+    memcpy(self->flat_r + tail, self->phase_r, start * sizeof(float));
+    const float *fl = self->flat_l + lags, *fr = self->flat_r + lags;
+    double ll = 0.0, rr = 0.0;
+    for (int i = 0; i < count; i++) {
+        ll += (double)fl[i] * fl[i];
+        rr += (double)fr[i] * fr[i];
+    }
+    if (ll < 1e-9 || rr < 1e-9)
+        return;  /* 조용하면 재지 않는다 */
+    double norm = 1.0 / sqrt(ll * rr);
+    int best = 0;
+    double best_value = 0.0;
+    for (int k = -lags; k <= lags; k++) {
+        float sum = 0.0f;
+        const float *shifted = fr + k;
+        for (int i = 0; i < count; i++)
+            sum += fl[i] * shifted[i];
+        double *score = &self->phase_score[k + MAX_LAG];
+        *score += (sum * norm - *score) * PHASE_SMOOTH;
+        if (fabs(*score) > fabs(best_value)) {
+            best_value = *score;
+            best = k;
+        }
+    }
+    if (!self->flipped && best_value < PHASE_FLIP)
+        self->flipped = 1;
+    else if (self->flipped && best_value > PHASE_UNFLIP)
+        self->flipped = 0;
+    double at_zero = fabs(self->phase_score[MAX_LAG]);
+    int want = 0;
+    if (abs(best) >= 2 && fabs(best_value) >= PHASE_MATCH && fabs(best_value) - at_zero > PHASE_GAIN)
+        want = best;
+    /* 맞추고 있는 어긋남이 아직 거의 그만큼 닮았으면 그대로 둔다(흔들리지 않게). */
+    if (self->lag != 0 && want == 0 &&
+        fabs(self->phase_score[self->lag + MAX_LAG]) >= PHASE_MATCH - 0.05)
+        want = self->lag;
+    if (want == self->candidate)
+        self->candidate_count++;
+    else {
+        self->candidate = want;
+        self->candidate_count = 1;
+    }
+    if (self->candidate != self->lag && self->candidate_count >= PHASE_STABLE && self->fade >= 1.0) {
+        self->fade_from = self->lag;
+        self->lag = self->candidate;
+        self->fade = 0.0;
+    }
+}
+
+/* 어긋남 lag(+ 면 R 이 늦다 → L 을 늦춘다)만큼 맞춘 L·R. */
+static void read_aligned(const AutoMaster *self, int lag, double *l, double *r)
+{
+    int size = 2 * MAX_LAG;
+    int dl = lag > 0 ? lag : 0, dr = lag < 0 ? -lag : 0;
+    *l = self->input_l[(self->input_head - dl + size) % size];
+    *r = self->input_r[(self->input_head - dr + size) % size];
+}
+
 static void reset(AutoMaster *self)
 {
     int lookahead = (int)(self->rate * LOOKAHEAD_TIME + 0.5);
@@ -569,6 +675,29 @@ static void reset(AutoMaster *self)
     self->fast_env = self->slow_env = 0.0;
     self->duck = 1.0;
     self->fill_power = self->fill_weight = 0.0;
+    for (int band = 0; band < BANDS; band++)
+        self->fill_band_power[band] = self->fill_band_weight[band] = 0.0;
+    set_pass(&self->phase_band[0], self->rate, PHASE_LOW_HZ, 1);
+    set_pass(&self->phase_band[1], self->rate, PHASE_HIGH_HZ, 0);
+    for (int k = 0; k < 2; k++) {
+        memset(self->phase_band[k].z1, 0, sizeof(self->phase_band[k].z1));
+        memset(self->phase_band[k].z2, 0, sizeof(self->phase_band[k].z2));
+    }
+    memset(self->phase_l, 0, sizeof(self->phase_l));
+    memset(self->phase_r, 0, sizeof(self->phase_r));
+    memset(self->phase_score, 0, sizeof(self->phase_score));
+    memset(self->input_l, 0, sizeof(self->input_l));
+    memset(self->input_r, 0, sizeof(self->input_r));
+    self->phase_head = self->phase_tick = self->input_head = 0;
+    self->phase_every = (int)(self->rate * PHASE_EVERY);
+    self->max_lag = (int)(self->rate * PHASE_MAX_LAG + 0.5);
+    if (self->max_lag > MAX_LAG - 1)
+        self->max_lag = MAX_LAG - 1;
+    self->flipped = 0;
+    self->flip_gain = 1.0;
+    self->fade_step = 1.0 / (self->rate * PHASE_FADE);
+    self->lag = self->candidate = self->candidate_count = self->fade_from = 0;
+    self->fade = 1.0;
     self->fill_coef = 1.0 - exp(-1.0 / (self->rate * FILL_METER_TIME));
     memset(self->delay, 0, sizeof(self->delay));
     for (int index = 0; index < MAX_LOOKAHEAD; index++) {
@@ -613,9 +742,54 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     double deepest = 1.0;  /* 이 블록에서 리미터가 건 가장 작은 이득 */
     int any_sound = 0;
 
+    int phase_fix = is_on(self->params[P_PHASE_FIX]);
     for (int32_t n = 0; n < frames; n++) {
-        double left = inputs[0][n];
-        double right = inputs[1][n];
+        /* 위상 바로잡기: 판정은 들어온 그대로의 소리로, 바로잡은 소리는 그 뒤 모든 단계가 쓴다. */
+        double in_l = inputs[0][n], in_r = inputs[1][n];
+        {
+            int head = self->phase_head;
+            self->phase_l[head] = (float)run_biquad(&self->phase_band[1], 0, run_biquad(&self->phase_band[0], 0, in_l));
+            self->phase_r[head] = (float)run_biquad(&self->phase_band[1], 1, run_biquad(&self->phase_band[0], 1, in_r));
+            self->phase_head = (head + 1) % PHASE_WINDOW;
+            if (++self->phase_tick >= self->phase_every) {
+                self->phase_tick = 0;
+                if (phase_fix)
+                    estimate_phase(self);
+            }
+            if (!phase_fix && (self->flipped || self->lag != 0) && self->fade >= 1.0) {
+                self->flipped = 0;
+                self->fade_from = self->lag;
+                self->lag = 0;
+                self->fade = 0.0;
+                self->candidate = self->candidate_count = 0;
+            }
+            int size = 2 * MAX_LAG;
+            self->input_l[self->input_head] = (float)in_l;
+            self->input_r[self->input_head] = (float)in_r;
+            double l0, r0;
+            read_aligned(self, self->lag, &l0, &r0);
+            if (self->fade < 1.0) {
+                double l1, r1;
+                read_aligned(self, self->fade_from, &l1, &r1);
+                l0 = l1 + (l0 - l1) * self->fade;
+                r0 = r1 + (r0 - r1) * self->fade;
+                self->fade += self->fade_step;
+                if (self->fade > 1.0)
+                    self->fade = 1.0;
+            }
+            self->input_head = (self->input_head + 1) % size;
+            double want_gain = self->flipped ? -1.0 : 1.0;
+            if (self->flip_gain != want_gain) {
+                double step = 2.0 * self->fade_step;
+                self->flip_gain += self->flip_gain < want_gain ? step : -step;
+                if (fabs(self->flip_gain - want_gain) < step)
+                    self->flip_gain = want_gain;
+            }
+            in_l = l0;
+            in_r = r0 * self->flip_gain;
+        }
+        double left = in_l;
+        double right = in_r;
 
         /* AGC: 이득 걸기 전 소리를 잰다. */
         double kl = run_biquad(&self->highpass, 0, run_biquad(&self->shelf, 0, left));
@@ -659,8 +833,8 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         /* 모노 판정: 이득 앞 입력의 M·S 를 대역마다 거른다. */
         double band_mid[BANDS];
         {
-            double raw_mid = (inputs[0][n] + inputs[1][n]) * 0.5;
-            double raw_side = (inputs[0][n] - inputs[1][n]) * 0.5;
+            double raw_mid = (in_l + in_r) * 0.5;
+            double raw_side = (in_l - in_r) * 0.5;
             for (int band = 0; band < BANDS; band++) {
                 double m = raw_mid, s = raw_side;
                 for (int k = 0; k < 4; k++) {
@@ -760,8 +934,11 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             double added = 0.0, weight = 0.0;
             for (int band = 0; band < BANDS; band++) {
                 double w = band_mid[band] * band_mid[band];
-                added += mixed[band] * mixed[band] * w;
+                double a = mixed[band] * mixed[band] * w;
+                added += a;
                 weight += w;
+                self->fill_band_power[band] += (a - self->fill_band_power[band]) * self->fill_coef;
+                self->fill_band_weight[band] += (w - self->fill_band_weight[band]) * self->fill_coef;
             }
             self->fill_power += (added - self->fill_power) * self->fill_coef;
             self->fill_weight += (weight - self->fill_weight) * self->fill_coef;
@@ -825,6 +1002,13 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         slot->limiter_db = (float)(20.0 * log10(deepest > 1e-6 ? deepest : 1e-6));
         slot->loudness = (float)(-0.691 + 10.0 * log10(self->power + 1e-20));
         slot->sounding = any_sound;
+        for (int band = 0; band < BANDS; band++) {
+            double part = self->fill_band_weight[band] > 1e-20 ?
+                          self->fill_band_power[band] / self->fill_band_weight[band] : 0.0;
+            slot->fill_band_db[band] = part > 1e-12 ? (float)(10.0 * log10(part)) : -120.0f;
+        }
+        slot->phase_flip = self->flipped;
+        slot->phase_delay_ms = (float)(1000.0 * self->lag / self->rate);
         slot->tick = (LONG64)GetTickCount64();
     }
     _MM_SET_FLUSH_ZERO_MODE(mode);
@@ -867,6 +1051,7 @@ static void get_display(AutoMaster *self, int32_t index, char *text)
     switch (index) {
     case P_AGC:
     case P_BALANCE:
+    case P_PHASE_FIX:
     case P_WIDTH_LIMIT:
     case P_BASS_MONO:
     case P_MONO_WIDE:
