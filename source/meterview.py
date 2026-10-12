@@ -462,7 +462,7 @@ class MeterView(wx.Panel):
         event.Skip()
 
     def get_chip_width(self, text):
-        # Leveler 칩과 같은 GC 로 잰다. DC 로 재면 1 화소 어긋난다.
+        # Auto Master 칩과 같은 GC 로 잰다. DC 로 재면 1 화소 어긋난다.
         dc = wx.MemoryDC(wx.Bitmap(1, 1))
         return get_chip_width(wx.GraphicsContext.Create(dc), text)
 

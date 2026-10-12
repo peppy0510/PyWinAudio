@@ -5,9 +5,9 @@
 author: Taehong Kim
 email: peppy0510@hotmail.com
 
-PyWinAudio Leveler 가 audiodg 안에서 적어 두는 계기 값을 읽는다. 플러그인은 인스턴스마다
-공유 메모리 "Global\\PyWinAudioLeveler" 의 칸 하나에 블록마다 지금 거는 보정 값을 적는다
-(plugin/leveler.c 의 MeterBlock 과 같은 배치). 여기서는 가장 최근에 소리를 처리한 칸을 고른다.
+PyWinAudio Auto Master 가 audiodg 안에서 적어 두는 계기 값을 읽는다. 플러그인은 인스턴스마다
+공유 메모리 "Global\\PyWinAudioAutoMaster" 의 칸 하나에 블록마다 지금 거는 보정 값을 적는다
+(plugin/automaster.c 의 MeterBlock 과 같은 배치). 여기서는 가장 최근에 소리를 처리한 칸을 고른다.
 '''
 
 
@@ -16,9 +16,9 @@ import ctypes
 from ctypes import wintypes
 
 
-MAGIC = 0x4D4C5750  # 'PWLM'
+MAGIC = 0x4D415750  # 'PWAM'
 SLOTS = 8
-NAMES = ('Global\\PyWinAudioLeveler', 'Local\\PyWinAudioLeveler')
+NAMES = ('Global\\PyWinAudioAutoMaster', 'Local\\PyWinAudioAutoMaster')
 FILE_MAP_READ = 0x0004
 # 이보다 오래 소식이 없으면(소리가 멈췄거나 플러그인이 내려갔으면) 값을 보이지 않는다.
 STALE_MS = 1500

@@ -42,6 +42,7 @@ from units import INSET
 from units import TITLES
 from units import U
 from units import build_unit
+from units import migrate_automaster
 from units import make_unit
 from mixunit import MixerUnit
 from utilities import Canvas
@@ -319,6 +320,9 @@ class RackView(Canvas):
         self.analyzer = None
         self.analyzer_slot = AnalyzerSlot(self)
         self.columns = 1
+        # Leveler 시절 칸은 Auto Master 로 옮기고, 엔진 설정 줄도 새 DLL 로 곧장 다시 쓰게 한다.
+        if [data for data in chain if migrate_automaster(data)]:
+            wx.CallAfter(lambda: self and self.on_unit_change())
         self.units = [build_unit(data, self) for data in chain]
         self.offset = 0
         self.total = 0
@@ -438,8 +442,8 @@ class RackView(Canvas):
         self.units.append(unit)
         if path is not None:
             unit.load(path)
-        # Leveler 는 깔린 자리에서 바로 올린다. 깔려 있지 않으면 판에 까닭이 뜬다.
-        if kind == 'leveler' and os.path.exists(unit.data['path']):
+        # Auto Master 는 깔린 자리에서 바로 올린다. 깔려 있지 않으면 판에 까닭이 뜬다.
+        if kind == 'automaster' and os.path.exists(unit.data['path']):
             unit.load(unit.data['path'])
         self.on_unit_change()
         wx.CallAfter(self.reveal, unit)
@@ -497,7 +501,7 @@ class RackView(Canvas):
         self.last_tick = now
         if not self.IsShownOnScreen():
             return
-        # Leveler 의 보정 계기는 세 번에 한 번(약 10 Hz)만 다시 칠한다.
+        # Auto Master 의 보정 계기는 세 번에 한 번(약 10 Hz)만 다시 칠한다.
         self.meter_ticks = getattr(self, 'meter_ticks', 0) + 1
         if self.meter_ticks % 3 == 0:
             room = self.get_room()

@@ -2,8 +2,9 @@
  * author: Taehong Kim
  * email: peppy0510@hotmail.com
  *
- * PyWinAudio Leveler — 방송 프로세서처럼 소리를 고르게 다듬는 VST2 플러그인 첫 단계.
- * 자동 레벨(AGC)과 미리 보는 피크 리미터 둘. Equalizer APO 가 audiodg 안에서 올려
+ * PyWinAudio Auto Master — 방송 프로세서처럼 소리를 곡마다 손대지 않고 고르게 다듬는 VST2 플러그인.
+ * 자동 레벨(AGC), 스테레오 보정, 미리 보는 피크 리미터. 레벨만 맞추는 것이 아니라 Leveler 에서
+ * 이름을 바꿨다(사용자). Equalizer APO 가 audiodg 안에서 올려
  * 실시간으로 돌린다. 화면은 없고, 랙이 파라미터를 손잡이·단추로 보여 준다.
  *
  * VST2 의 바깥 모양(AEffect 구조체와 함수 포인터 넷, 디스패처 번호)은 source/vsthost.py
@@ -32,15 +33,17 @@
  *     아래는 만들지 않아 킥·서브 베이스는 가운데에 남는다. 타격음(빠른 포락이 느린 포락보다
  *     6 dB 넘게 높을 때)에서는 가짜 S 를 잠깐 줄여 어택이 번지지 않게 한다(DAFx-24 StereoWidener
  *     의 트랜지언트 처리와 같은 생각).
- *     넓이는 300 Hz–4 kHz 의 S/M 으로 잰다. 악기 자리가 있는 곳이 거기다. 전 대역으로 보면
- *     MP3 가 고역에 남긴 S(-20 dB 안팎) 때문에 거의 모노인 곡도 반쯤 스테레오로 읽혔다.
+ *     150 Hz 위를 150–600 Hz·600 Hz–3 kHz·3 kHz 위 세 대역으로 나눠(Linkwitz-Riley 4 차) 대역마다
+ *     S/M 을 재고 따로 채운다(Ozone Imager 처럼 — 사용자). 목표는 Wide Target 에 중저역 -5 dB,
+ *     중역 0, 고역 +2 dB. 판정 위 끝은 10 kHz — 전 대역 한 덩어리로 재면 MP3 가 고역에 남긴
+ *     S(-20 dB 안팎) 때문에 거의 모노인 곡도 반쯤 스테레오로 읽혔다.
  *     가짜 S 는 모자란 만큼만 채운다: 목표 넓이(Wide Target)의 S 에너지에서 지금 있는 S 를
  *     뺀 나머지. 이미 목표만큼 넓은 소리에는 아무것도 더하지 않아 그대로 나가고, 모노는 목표
  *     까지, 좁은 소리는 모자란 만큼만 넓어진다 — 방송 중에 곡마다 맞출 수 없으니(사용자).
  * 무음에서는 AGC 처럼 재기를 멈춘다.
  *
  * 계기: 단계마다 지금 얼마나 고치고 있는지(AGC 이득, 좌우 보정, 폭 줄임, 모노 채움, 리미터
- * 줄임)를 블록마다 공유 메모리 "Global\PyWinAudioLeveler" 에 적는다. 플러그인은 audiodg(세션 0,
+ * 줄임)를 블록마다 공유 메모리 "Global\PyWinAudioAutoMaster" 에 적는다. 플러그인은 audiodg(세션 0,
  * LocalService) 안에 있고 랙은 사용자 세션에 있어 Global 이름과 모두 읽을 수 있는 DACL 을 쓴다.
  * 인스턴스마다 칸 하나를 잡고, 랙은 가장 최근에 소리를 처리한 칸을 읽는다.
  */
@@ -56,7 +59,7 @@
 #include <sddl.h>
 
 #define MAGIC 0x56737450 /* 'VstP' */
-#define UNIQUE_ID 0x50774C76 /* 'PwLv' */
+#define UNIQUE_ID 0x5077414D /* 'PwAM' */
 #define VERSION 100
 
 #define EFF_OPEN 0
@@ -191,8 +194,12 @@ static const float PARAM_DEFAULTS[PARAM_COUNT] = {
 #define BASS_MONO_HZ 120.0
 #define WIDE_LOW -18.0
 #define WIDE_HIGH 0.0
-#define DETECT_LOW_HZ 300.0
-#define DETECT_HIGH_HZ 4000.0
+/* 모노 넓히기는 150 Hz 위를 세 대역으로 나눠 따로 재고 따로 채운다(Ozone Imager 처럼 — 사용자).
+ * 목표는 Wide Target 에 대역마다 더하는 값: 중저역은 적게(뭉개지고 위상감이 나기 쉽다), 고역은
+ * 많이(공기감). 판정 맨 위는 10 kHz 에서 끊는다 — MP3 가 잘라 낸 위쪽은 재지 않는다. */
+#define BANDS 3
+static const double BAND_EDGES[BANDS + 1] = {150.0, 600.0, 3000.0, 10000.0};
+static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 2.0};
 #define WIDE_HZ 150.0
 #define MAX_WIDE_DELAY 8192    /* 192 kHz 에서 42 ms — 가장 긴 갈래 27 ms 를 넉넉히 담는다 */
 #define VELVET_LENGTH 0.025      /* 초 */
@@ -212,7 +219,7 @@ static const float PARAM_DEFAULTS[PARAM_COUNT] = {
 
 /* ------------------------------------------------------------ 계기(공유 메모리) */
 
-#define METER_MAGIC 0x4D4C5750 /* 'PWLM' */
+#define METER_MAGIC 0x4D415750 /* 'PWAM' */
 #define METER_VERSION 1
 #define METER_SLOTS 8
 
@@ -249,10 +256,10 @@ static MeterBlock *open_meters(void)
                                                               &descriptor, NULL))
         attributes.lpSecurityDescriptor = descriptor;
     HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0,
-                                        sizeof(MeterBlock), L"Global\\PyWinAudioLeveler");
+                                        sizeof(MeterBlock), L"Global\\PyWinAudioAutoMaster");
     if (mapping == NULL)
         mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0,
-                                     sizeof(MeterBlock), L"Local\\PyWinAudioLeveler");
+                                     sizeof(MeterBlock), L"Local\\PyWinAudioAutoMaster");
     if (descriptor != NULL)
         LocalFree(descriptor);
     if (mapping == NULL)
@@ -316,9 +323,12 @@ typedef struct {
     double balance_db;     /* 왼쪽이 크면 + — 왼쪽을 반만큼 내리고 오른쪽을 반만큼 올린다 */
     double side_db;        /* S 에 걸고 있는 이득 */
     Biquad bass;           /* S 의 120 Hz 고역 통과 */
-    Biquad wide_highpass;  /* 가짜 S 의 300 Hz 고역 통과 */
-    Biquad detect_high, detect_low;  /* 모노 판정용 300 Hz–4 kHz 띠(0 = M, 1 = S) */
-    double detect_mid, detect_side;
+    Biquad wide_highpass;  /* 가짜 S 의 150 Hz 고역 통과 */
+    /* 모노 판정: 대역마다 아래 끝 고역 통과 둘·위 끝 저역 통과 둘(Linkwitz-Riley 4 차, 0 = M, 1 = S) */
+    Biquad detect[BANDS][4];
+    double detect_mid[BANDS], detect_side[BANDS];
+    /* 가짜 S 를 세 대역으로 나누는 크로스오버(600 Hz·3 kHz, 각 LR4 = 2 차 둘) */
+    Biquad split_low[2], split_rest[2], split_mid[2], split_high[2];
     float wide_delay[MAX_WIDE_DELAY];
     int wide_head;
     int pulse_count;
@@ -326,7 +336,7 @@ typedef struct {
     float pulse_gain[MAX_PULSES];  /* 부호 × 크기, 제곱합 1 */
     double fast_env, slow_env, duck;
     double fast_coef, slow_coef, duck_coef;
-    double wide_mix;       /* 지금 섞고 있는 가짜 S 의 크기(M 대비 배율) */
+    double wide_mix[BANDS];  /* 대역마다 지금 섞고 있는 가짜 S 의 크기(M 대비 배율) */
     /* 계기용: 실제로 섞인 가짜 S 배율(wide_mix × duck)의 제곱을 띠 M 에너지로 가중한 평균의 분자·분모 */
     double fill_power, fill_weight;
     double fill_coef;
@@ -340,7 +350,7 @@ typedef struct {
     double release;        /* 지금 풀리고 있는 이득 */
     MeterSlot *meter;      /* 계기 칸(없으면 NULL) */
     double release_coef;
-} Leveler;
+} AutoMaster;
 
 static double get_speed_time(float value)
 {
@@ -348,22 +358,22 @@ static double get_speed_time(float value)
     return 10.0 * pow(0.1, value);
 }
 
-static double get_target(const Leveler *self)
+static double get_target(const AutoMaster *self)
 {
     return TARGET_LOW + (TARGET_HIGH - TARGET_LOW) * self->params[P_TARGET];
 }
 
-static double get_max_gain(const Leveler *self)
+static double get_max_gain(const AutoMaster *self)
 {
     return MAX_GAIN_HIGH * self->params[P_MAX_GAIN];
 }
 
-static double get_width(const Leveler *self)
+static double get_width(const AutoMaster *self)
 {
     return WIDTH_LOW + (WIDTH_HIGH - WIDTH_LOW) * self->params[P_WIDTH];
 }
 
-static double get_wide_amount(const Leveler *self)
+static double get_wide_amount(const AutoMaster *self)
 {
     return WIDE_LOW + (WIDE_HIGH - WIDE_LOW) * self->params[P_WIDE_AMOUNT];
 }
@@ -373,7 +383,7 @@ static double clamp(double value, double low, double high)
     return value < low ? low : value > high ? high : value;
 }
 
-static double get_ceiling(const Leveler *self)
+static double get_ceiling(const AutoMaster *self)
 {
     return CEILING_LOW * (1.0 - self->params[P_CEILING]);
 }
@@ -384,7 +394,7 @@ static int is_on(float value)
 }
 
 /* BS.1770 K 가중의 두 단(높은 선반 + RLB 고역 통과). 표본 빠르기마다 계수를 다시 낸다. */
-static void set_filters(Leveler *self)
+static void set_filters(AutoMaster *self)
 {
     double rate = self->rate;
     double f0 = 1681.974450955533, gain = 3.999843853973347, q = 0.7071752369554196;
@@ -456,7 +466,7 @@ static double run_biquad(Biquad *b, int channel, double x)
     return y;
 }
 
-static void reset(Leveler *self)
+static void reset(AutoMaster *self)
 {
     int lookahead = (int)(self->rate * LOOKAHEAD_TIME + 0.5);
     if (lookahead < 1)
@@ -484,13 +494,27 @@ static void reset(Leveler *self)
     memset(self->wide_highpass.z1, 0, sizeof(self->wide_highpass.z1));
     memset(self->wide_highpass.z2, 0, sizeof(self->wide_highpass.z2));
     memset(self->wide_delay, 0, sizeof(self->wide_delay));
-    set_pass(&self->detect_high, self->rate, DETECT_LOW_HZ, 1);
-    set_pass(&self->detect_low, self->rate, DETECT_HIGH_HZ, 0);
-    memset(self->detect_high.z1, 0, sizeof(self->detect_high.z1));
-    memset(self->detect_high.z2, 0, sizeof(self->detect_high.z2));
-    memset(self->detect_low.z1, 0, sizeof(self->detect_low.z1));
-    memset(self->detect_low.z2, 0, sizeof(self->detect_low.z2));
-    self->detect_mid = self->detect_side = 0.0;
+    for (int band = 0; band < BANDS; band++) {
+        for (int k = 0; k < 4; k++) {
+            Biquad *b = &self->detect[band][k];
+            set_pass(b, self->rate, k < 2 ? BAND_EDGES[band] : BAND_EDGES[band + 1], k < 2);
+            memset(b->z1, 0, sizeof(b->z1));
+            memset(b->z2, 0, sizeof(b->z2));
+        }
+        self->detect_mid[band] = self->detect_side[band] = 0.0;
+        self->wide_mix[band] = 0.0;
+    }
+    for (int k = 0; k < 2; k++) {
+        set_pass(&self->split_low[k], self->rate, BAND_EDGES[1], 0);
+        set_pass(&self->split_rest[k], self->rate, BAND_EDGES[1], 1);
+        set_pass(&self->split_mid[k], self->rate, BAND_EDGES[2], 0);
+        set_pass(&self->split_high[k], self->rate, BAND_EDGES[2], 1);
+        Biquad *all[4] = {&self->split_low[k], &self->split_rest[k], &self->split_mid[k], &self->split_high[k]};
+        for (int j = 0; j < 4; j++) {
+            memset(all[j]->z1, 0, sizeof(all[j]->z1));
+            memset(all[j]->z2, 0, sizeof(all[j]->z2));
+        }
+    }
     self->wide_head = 0;
     /* 벨벳 노이즈: 고른 칸마다 펄스 하나, 칸 안 자리와 부호는 정해진 씨앗의 난수. 매번 같은 열이
      * 나와 다시 열어도 소리가 바뀌지 않는다. */
@@ -524,7 +548,6 @@ static void reset(Leveler *self)
     self->duck_coef = 1.0 - exp(-1.0 / (self->rate * DUCK_RELEASE));
     self->fast_env = self->slow_env = 0.0;
     self->duck = 1.0;
-    self->wide_mix = 0.0;
     self->fill_power = self->fill_weight = 0.0;
     self->fill_coef = 1.0 - exp(-1.0 / (self->rate * FILL_METER_TIME));
     memset(self->delay, 0, sizeof(self->delay));
@@ -541,7 +564,7 @@ static void reset(Leveler *self)
 
 static void process(AEffect *effect, float **inputs, float **outputs, int32_t frames)
 {
-    Leveler *self = (Leveler *)effect->object;
+    AutoMaster *self = (AutoMaster *)effect->object;
     unsigned int mode = _MM_GET_FLUSH_ZERO_MODE();
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
 
@@ -551,8 +574,12 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     int bass_mono = is_on(self->params[P_BASS_MONO]);
     double width = get_width(self);
     int mono_wide = is_on(self->params[P_MONO_WIDE]);
-    /* 늦춘 갈래들은 서로 거의 무관해 합의 크기가 √갈래수 배다. 그만큼 나눠 M 과 같은 크기로. */
-    double wide_target = pow(10.0, get_wide_amount(self) / 10.0);  /* 목표 S/M 에너지 비 */
+    /* 대역마다 목표 S/M 에너지 비 — Wide Target 에 대역 몫을 더하되 0 dB(S = M) 를 넘지 않게. */
+    double wide_target[BANDS];
+    for (int band = 0; band < BANDS; band++) {
+        double db = get_wide_amount(self) + BAND_OFFSET[band];
+        wide_target[band] = pow(10.0, (db < 0.0 ? db : 0.0) / 10.0);
+    }
 
     double target = get_target(self);
     double max_gain = get_max_gain(self);
@@ -608,17 +635,23 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->mid_power += (mid * mid - self->mid_power) * c;
             self->side_power += (side * side - self->side_power) * c;
         }
-        /* 모노 판정용 띠: 이득 앞 입력의 M·S 를 300 Hz–4 kHz 로 거른다. */
-        double band_mid;
+        /* 모노 판정: 이득 앞 입력의 M·S 를 대역마다 거른다. */
+        double band_mid[BANDS];
         {
             double raw_mid = (inputs[0][n] + inputs[1][n]) * 0.5;
             double raw_side = (inputs[0][n] - inputs[1][n]) * 0.5;
-            band_mid = run_biquad(&self->detect_low, 0, run_biquad(&self->detect_high, 0, raw_mid));
-            double band_side = run_biquad(&self->detect_low, 1, run_biquad(&self->detect_high, 1, raw_side));
-            if (sounding) {
-                double c = self->stereo_coef * pace;
-                self->detect_mid += (band_mid * band_mid - self->detect_mid) * c;
-                self->detect_side += (band_side * band_side - self->detect_side) * c;
+            for (int band = 0; band < BANDS; band++) {
+                double m = raw_mid, s = raw_side;
+                for (int k = 0; k < 4; k++) {
+                    m = run_biquad(&self->detect[band][k], 0, m);
+                    s = run_biquad(&self->detect[band][k], 1, s);
+                }
+                band_mid[band] = m;
+                if (sounding) {
+                    double c = self->stereo_coef * pace;
+                    self->detect_mid[band] += (m * m - self->detect_mid[band]) * c;
+                    self->detect_side[band] += (s * s - self->detect_side[band]) * c;
+                }
             }
         }
         double want_balance = 0.0, want_side = 0.0;
@@ -634,22 +667,26 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->balance_db += (want_balance - self->balance_db) * f;
             self->side_db += (want_side - self->side_db) * f;
         }
-        /* 모노 넓히기: 목표 S 에너지에서 지금 있는 S 를 뺀 만큼만 가짜 S 로 채운다. */
-        double want_mix = 0.0;
-        if (mono_wide && self->detect_mid > 1e-14) {
-            double have = self->detect_side / self->detect_mid;
-            want_mix = have < wide_target ? sqrt(wide_target - have) : 0.0;
+        /* 모노 넓히기: 대역마다 목표 S 에너지에서 지금 있는 S 를 뺀 만큼만 가짜 S 로 채운다. */
+        int widening = 0;
+        for (int band = 0; band < BANDS; band++) {
+            double want_mix = 0.0;
+            if (mono_wide && self->detect_mid[band] > 1e-14) {
+                double have = self->detect_side[band] / self->detect_mid[band];
+                want_mix = have < wide_target[band] ? sqrt(wide_target[band] - have) : 0.0;
+            }
+            if (sounding || !mono_wide)
+                self->wide_mix[band] += (want_mix - self->wide_mix[band]) *
+                                        self->follow_coef * (sounding ? pace : 1.0);
+            widening |= self->wide_mix[band] > 1e-4;
         }
-        if (sounding || !mono_wide)
-            self->wide_mix += (want_mix - self->wide_mix) *
-                              self->follow_coef * (sounding ? pace : 1.0);
-        double mixed = 0.0;
-        if (stereo || bass_mono || self->wide_mix > 1e-4) {
+        double mixed[BANDS] = {0.0, 0.0, 0.0};
+        if (stereo || bass_mono || widening) {
             left *= pow(10.0, -self->balance_db / 40.0);
             right *= pow(10.0, self->balance_db / 40.0);
             double mid = (left + right) * 0.5;
             double side = (left - right) * 0.5 * pow(10.0, self->side_db / 20.0);
-            /* 가짜 S: M 을 늦춘 갈래들의 부호 섞은 합, 300 Hz 위만. */
+            /* 가짜 S: M 을 벨벳 노이즈에 통과시킨 것, 150 Hz 위만. */
             int head = self->wide_head;
             self->wide_delay[head] = (float)mid;
             double made = 0.0;
@@ -670,8 +707,16 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
                 self->duck = TRANSIENT_DUCK;
             else
                 self->duck += (1.0 - self->duck) * self->duck_coef;
-            mixed = self->wide_mix * self->duck;
-            side += made * mixed;
+            /* 가짜 S 를 600 Hz·3 kHz 에서 셋으로 나눠 대역마다 제 배율로. 셋을 더하면 크기는 평평하다. */
+            double low = run_biquad(&self->split_low[1], 0, run_biquad(&self->split_low[0], 0, made));
+            double rest = run_biquad(&self->split_rest[1], 0, run_biquad(&self->split_rest[0], 0, made));
+            double middle = run_biquad(&self->split_mid[1], 0, run_biquad(&self->split_mid[0], 0, rest));
+            double high = run_biquad(&self->split_high[1], 0, run_biquad(&self->split_high[0], 0, rest));
+            double parts[BANDS] = {low, middle, high};
+            for (int band = 0; band < BANDS; band++) {
+                mixed[band] = self->wide_mix[band] * self->duck;
+                side += parts[band] * mixed[band];
+            }
             /* 저역 모노는 가짜 S 까지 더한 뒤에 — 150 Hz 고역 통과가 다 못 거른 낮은 S 도 걷는다. */
             if (bass_mono)
                 side = run_biquad(&self->bass, 0, side);
@@ -686,8 +731,13 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         /* 계기는 wide_mix 만 보면 타격음 지킴이 줄인 만큼을 놓쳐 드럼 많은 곡에서 5 dB 크게 보였다.
          * 지킴은 소리가 큰 순간에 걸리므로 시간 평균으로는 안 드러난다 — 띠 M 에너지로 가중한다. */
         if (sounding || !mono_wide) {
-            double weight = band_mid * band_mid;
-            self->fill_power += (mixed * mixed * weight - self->fill_power) * self->fill_coef;
+            double added = 0.0, weight = 0.0;
+            for (int band = 0; band < BANDS; band++) {
+                double w = band_mid[band] * band_mid[band];
+                added += mixed[band] * mixed[band] * w;
+                weight += w;
+            }
+            self->fill_power += (added - self->fill_power) * self->fill_coef;
             self->fill_weight += (weight - self->fill_weight) * self->fill_coef;
         }
 
@@ -758,7 +808,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
 
 static void set_parameter(AEffect *effect, int32_t index, float value)
 {
-    Leveler *self = (Leveler *)effect->object;
+    AutoMaster *self = (AutoMaster *)effect->object;
     if (index < 0 || index >= PARAM_COUNT)
         return;
     if (value < 0.0f)
@@ -773,7 +823,7 @@ static void set_parameter(AEffect *effect, int32_t index, float value)
 
 static float get_parameter(AEffect *effect, int32_t index)
 {
-    Leveler *self = (Leveler *)effect->object;
+    AutoMaster *self = (AutoMaster *)effect->object;
     if (index < 0 || index >= PARAM_COUNT)
         return 0.0f;
     return self->params[index];
@@ -787,7 +837,7 @@ static void copy_text(void *target, const char *text, size_t size)
     ((char *)target)[size - 1] = 0;
 }
 
-static void get_display(Leveler *self, int32_t index, char *text)
+static void get_display(AutoMaster *self, int32_t index, char *text)
 {
     switch (index) {
     case P_AGC:
@@ -823,7 +873,7 @@ static void get_display(Leveler *self, int32_t index, char *text)
 static intptr_t dispatch(AEffect *effect, int32_t opcode, int32_t index, intptr_t value,
                          void *pointer, float option)
 {
-    Leveler *self = (Leveler *)effect->object;
+    AutoMaster *self = (AutoMaster *)effect->object;
     char text[64];
     (void)value;
     (void)option;
@@ -890,10 +940,10 @@ static intptr_t dispatch(AEffect *effect, int32_t opcode, int32_t index, intptr_
     case EFF_GET_PLUG_CATEGORY:
         return CATEGORY_MASTERING;
     case EFF_GET_EFFECT_NAME:
-        copy_text(pointer, "PyWinAudio Leveler", 32);
+        copy_text(pointer, "PyWinAudio Auto Master", 32);
         return 1;
     case EFF_GET_PRODUCT_STRING:
-        copy_text(pointer, "PyWinAudio Leveler", 64);
+        copy_text(pointer, "PyWinAudio Auto Master", 64);
         return 1;
     case EFF_GET_VENDOR_STRING:
         copy_text(pointer, "PyWinAudio", 64);
@@ -914,7 +964,7 @@ __declspec(dllexport) AEffect *VSTPluginMain(AudioMaster master)
 {
     if (master == NULL || master(NULL, MASTER_VERSION, 0, 0, NULL, 0.0f) == 0)
         return NULL;
-    Leveler *self = (Leveler *)calloc(1, sizeof(Leveler));
+    AutoMaster *self = (AutoMaster *)calloc(1, sizeof(AutoMaster));
     if (self == NULL)
         return NULL;
     self->master = master;

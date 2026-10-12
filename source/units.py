@@ -80,15 +80,18 @@ TITLES = {
     'graphic': 'Graphic EQ',
     'delay': 'Delay',
     'stereo': 'Stereo',
-    'leveler': 'Leveler',
+    'automaster': 'Auto Master',
     'vst': 'VST plugin',
     'custom': 'Custom lines',
 }
 
-ADDABLE = ('preamp', 'parametric', 'graphic', 'delay', 'stereo', 'leveler', 'vst')
+ADDABLE = ('preamp', 'parametric', 'graphic', 'delay', 'stereo', 'automaster', 'vst')
 # PyWinAudio 의 자체 플러그인. 엔진(audiodg)이 읽을 수 있는 곳에 깔아 둔다(plugin/install.ps1).
-LEVELER_PATH = r'C:\Program Files\VSTPlugIns\PyWinAudio\PyWinAudioLeveler.dll'
-LEVELER_FILE = 'pywinaudioleveler.dll'
+AUTOMASTER_PATH = r'C:\Program Files\VSTPlugIns\PyWinAudio\PyWinAudioAutoMaster.dll'
+AUTOMASTER_FILE = 'pywinaudioautomaster.dll'
+AUTOMASTER_NAME = 'PyWinAudio Auto Master'
+# Leveler 시절 이름. 저장된 랙에서 만나면 Auto Master 로 옮긴다(파라미터 이름은 그대로라 값도 이어진다).
+OLD_AUTOMASTER_FILE = 'pywinaudioleveler.dll'
 
 BAND_TYPES = (('PK', 'Peak'), ('LSC', 'Low shelf'), ('HSC', 'High shelf'),
               ('HPQ', 'Low cut'), ('LPQ', 'High cut'))
@@ -120,10 +123,10 @@ def make_unit(kind):
     if kind == 'vst':
         return {'kind': kind, 'on': True, 'path': '', 'params': [], 'display': [],
                 'chunk': None}
-    if kind == 'leveler':
+    if kind == 'automaster':
         # 엔진에는 보통 VST 줄로 나간다. 랙에서만 기본 장치처럼 보인다.
-        return {'kind': 'vst', 'on': True, 'path': LEVELER_PATH, 'params': [], 'display': [],
-                'chunk': None, 'name': 'PyWinAudio Leveler', 'vendor': 'PyWinAudio'}
+        return {'kind': 'vst', 'on': True, 'path': AUTOMASTER_PATH, 'params': [], 'display': [],
+                'chunk': None, 'name': AUTOMASTER_NAME, 'vendor': 'PyWinAudio'}
     return {'kind': 'custom', 'on': True, 'lines': []}
 
 
@@ -783,7 +786,7 @@ class VstUnit(Unit):
     BUTTONS = 76
     # 플러그인이 알려 준 구역 사이의 틈. 가운데에 세로 금 하나.
     SEPARATOR = 21
-    # PyWinAudio Leveler 의 보정 계기 줄(이름·값 한 줄 + 막대).
+    # PyWinAudio Auto Master 의 보정 계기 줄(이름·값 한 줄 + 막대).
     METER_ROW = 26
     METER_CELL = 112
     METER_GAP = 16
@@ -841,10 +844,10 @@ class VstUnit(Unit):
         return self.extras + (self.visible if self.shows_controls() else [])
 
     def shows_meters(self):
-        return self.is_leveler() and self.data.get('show_meters', True)
+        return self.is_automaster() and self.data.get('show_meters', True)
 
     def shows_controls(self):
-        return not self.is_leveler() or self.data.get('show_controls', True)
+        return not self.is_automaster() or self.data.get('show_controls', True)
 
     def is_switch(self, index):
         '''VST2 의 파라미터는 모두 0~1 실수라 켜고 끄는 값을 따로 알려 주지 않는다. 플러그인이
@@ -1126,8 +1129,8 @@ class VstUnit(Unit):
             x -= self.KNOB_GAP
         return places, separators, row + 1
 
-    def is_leveler(self):
-        return self.data.get('name') == 'PyWinAudio Leveler'
+    def is_automaster(self):
+        return self.data.get('name') == AUTOMASTER_NAME
 
     def get_height(self, width):
         if self.folded:
@@ -1152,7 +1155,7 @@ class VstUnit(Unit):
     def update_meters(self, elapsed):
         '''플러그인이 audiodg 안에서 적은 값을 읽는다. 리미터는 블록마다 들쭉날쭉해 봉우리를
         잡고 천천히 놓는다. 값이 바뀌었으면 참.'''
-        from levelermeter import READER
+        from automastermeter import READER
         values = READER.read()
         old = self.meter_values
         if values is not None:
@@ -1181,7 +1184,7 @@ class VstUnit(Unit):
         if first:
             shift = max(0, int(self.KNOB / 2 - max(knob.get_reach(gc, self.KNOB)
                                                     for knob in first)))
-        # Leveler 는 보정 계기를 맨 위에, 그 아래 금 하나, 그 아래 손잡이들(사용자).
+        # Auto Master 는 보정 계기를 맨 위에, 그 아래 금 하나, 그 아래 손잡이들(사용자).
         top = body.y
         self.meter_rect = None
         meter_separator = []
@@ -1209,7 +1212,7 @@ class VstUnit(Unit):
         # 줄 사이 가로 금. 손잡이가 놓인 데까지만 — 가장 오른쪽까지 보이는 손잡이의 끝에서 멈춘다(사용자).
         end = max(knob.rect.x + self.KNOB / 2 + knob.get_reach(gc, self.KNOB)
                   for knob in self.visible) if self.visible else body.x
-        # 계기 줄이 있는 판(Leveler)은 계기 아래 금이 판 끝까지 간다. 줄 사이 금도 거기에 맞춘다(사용자).
+        # 계기 줄이 있는 판(Auto Master)은 계기 아래 금이 판 끝까지 간다. 줄 사이 금도 거기에 맞춘다(사용자).
         if meter_separator:
             end = body.x + body.width
         self.separators += [wx.Rect(body.x, top + row * (KNOB_ROW + self.ROW_GAP) - self.RULE_GAP - 1,
@@ -1262,8 +1265,8 @@ UNIT_CLASSES = {
 }
 
 
-class LevelerUnit(VstUnit):
-    '''PyWinAudio Leveler. 속은 VST 장치 그대로지만 PyWinAudio 와 함께 깔리는 것이라 기본 장치처럼
+class AutoMasterUnit(VstUnit):
+    '''PyWinAudio Auto Master. 속은 VST 장치 그대로지만 PyWinAudio 와 함께 깔리는 것이라 기본 장치처럼
     다룬다(사용자): 파일을 고르지 않고, 편집기가 없어 Edit·Choose 단추를 두지 않으며 그 자리까지
     손잡이가 쓴다. 이름과 색도 제 것.'''
 
@@ -1271,7 +1274,7 @@ class LevelerUnit(VstUnit):
 
     def __init__(self, data, rack):
         super().__init__(data, rack)
-        self.face, self.accent = FACES['leveler']
+        self.face, self.accent = FACES['automaster']
 
     def build(self):
         super().build()
@@ -1327,28 +1330,38 @@ class LevelerUnit(VstUnit):
         self.rack.on_unit_change(self)
 
     def get_title(self):
-        return 'Leveler'
+        return 'Auto Master'
 
     def get_subtitle(self):
         if self.data.get('error'):
             return self.data['error']
         if self.notice:
             return self.notice
-        if not os.path.exists(self.data.get('path') or LEVELER_PATH):
+        if not os.path.exists(self.data.get('path') or AUTOMASTER_PATH):
             return 'Not installed: run plugin\\install.ps1'
         return 'AGC, stereo, limiter'
 
-    def is_leveler(self):
+    def is_automaster(self):
         return True
 
 
-def is_leveler_data(data):
-    return data.get('kind') == 'vst' and os.path.basename(data.get('path') or '').lower() == LEVELER_FILE
+def is_automaster_data(data):
+    return data.get('kind') == 'vst' and os.path.basename(data.get('path') or '').lower() == AUTOMASTER_FILE
+
+
+def migrate_automaster(data):
+    '''Leveler 시절 칸이면 Auto Master 경로·이름으로 옮기고 참. 엔진 설정 줄도 다시 써야 한다.'''
+    if data.get('kind') != 'vst' or os.path.basename(data.get('path') or '').lower() != OLD_AUTOMASTER_FILE:
+        return False
+    data['path'] = AUTOMASTER_PATH
+    data['name'] = AUTOMASTER_NAME
+    data.pop('defaults', None)
+    return True
 
 
 def build_unit(data, rack):
-    if is_leveler_data(data):
-        return LevelerUnit(data, rack)
+    if is_automaster_data(data):
+        return AutoMasterUnit(data, rack)
     return UNIT_CLASSES.get(data['kind'], CustomUnit)(data, rack)
 
 

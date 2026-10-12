@@ -56,7 +56,7 @@ FACES = {
     'delay': ('#1d1f23', '#ff9a3d'),
     'stereo': ('#1d1f23', '#a894ff'),
     'vst': ('#1d1f23', '#ff9a3d'),
-    'leveler': ('#1d1f23', '#7fb8ff'),
+    'automaster': ('#1d1f23', '#7fb8ff'),
     'custom': ('#1d1f23', '#8b8f96'),
 }
 
@@ -171,7 +171,7 @@ def draw_title(gc, left, y, title, subtitle, tone, limit):
     return width
 
 
-# 이름 띠의 구역 토글 칩(Analyzer 의 METERS·SPECTRUM, Leveler 의 METERS·CONTROLS). 모양은 여기 하나.
+# 이름 띠의 구역 토글 칩(Analyzer 의 METERS·SPECTRUM, Auto Master 의 METERS·CONTROLS). 모양은 여기 하나.
 CHIP_HEIGHT = 16
 CHIP_PAD = 6
 CHIP_GAP = 4
@@ -202,7 +202,7 @@ def get_fill(lit, hovered, pressed, accent):
 
 def draw_chip(gc, rect, text, lit, hovered=False):
     '''평평한 글씨 칩. 켜져 있으면 CHIP_LIT, 꺼져 있으면 테두리만. 판 색을 따르지 않는다 —
-    Analyzer·Leveler 칩 색이 달라 보였다(사용자). 누르는 순간 바뀌므로 눌림 표시는 없다.'''
+    Analyzer·Auto Master 칩 색이 달라 보였다(사용자). 누르는 순간 바뀌므로 눌림 표시는 없다.'''
     fill = get_fill(lit, hovered, False, CHIP_LIT)
     gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
     gc.SetBrush(wx.Brush(fill))

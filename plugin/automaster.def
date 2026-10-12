@@ -1,4 +1,4 @@
-LIBRARY PyWinAudioLeveler
+LIBRARY PyWinAudioAutoMaster
 EXPORTS
     VSTPluginMain
     main=VSTPluginMain
