@@ -1271,13 +1271,45 @@ class AutoMasterUnit(VstUnit):
     손잡이가 쓴다. 이름과 색도 제 것.'''
 
     BUTTONS = 0
+    # 예전 파라미터 이름 → 지금 이름들. 저장된 값은 새 이름 모두에 옮긴다(Stereo 하나가 둘로 나뉘었다).
+    RENAMED = {'Stereo': ('Balance', 'Width Limit')}
+    # 손잡이 → 그것을 켜고 끄는 단추. 단추가 꺼져 있으면 손잡이를 흐리게(사용자: 관계가 안 보였다).
+    DEPENDS = {'Target': 'AGC', 'Max Gain': 'AGC', 'Speed': 'AGC', 'Max Width': 'Width Limit',
+               'Wide Target': 'Mono Wide', 'Air': 'Mono Wide', 'Ceiling': 'Limiter'}
 
     def __init__(self, data, rack):
+        self.rename_params(data)
         super().__init__(data, rack)
         self.face, self.accent = FACES['automaster']
+        # 제 플러그인이라 가볍다. 켤 때 바로 올려 파라미터 목록을 지금 빌드에 맞춘다 — 늦게 올리면 새로
+        # 생긴 손잡이(Air)가 판에도 엔진 설정 줄에도 없었다. 목록이 바뀌었으면 엔진 줄도 다시 쓴다.
+        if os.path.exists(self.data.get('path') or '') and self.ensure_plugin() is not None:
+            if [item[0] for item in self.data['params']] != self.loaded_names:
+                wx.CallAfter(lambda: self.rack and self.rack.on_unit_change(self))
+
+    loaded_names = None
+
+    def rename_params(self, data):
+        self.loaded_names = [item[0] for item in data.get('params') or []]
+        params, renamed = [], False
+        for name, value in data.get('params') or []:
+            for new in self.RENAMED.get(name, (name,)):
+                params.append([new, value])
+            renamed |= name in self.RENAMED
+        if renamed:
+            data['params'] = params
+            data.pop('defaults', None)
+            data.pop('groups', None)
+            data.pop('switches', None)
 
     def build(self):
         super().build()
+        names = [item[0] for item in self.data.get('params', ())]
+        for index, name in enumerate(names):
+            switch = self.DEPENDS.get(name)
+            if switch in names and index < len(self.knobs):
+                at = names.index(switch)
+                self.knobs[index].inactive = lambda at=at: self.data['params'][at][1] < 0.5
         # Analyzer 의 구역 단추처럼: 계기와 상세 설정을 따로 보이고 숨긴다. 둘 다 끌 수는 없다.
         # 모양·자리 모두 Analyzer 의 구역 칩과 같게: 제목 바로 뒤의 작은 글씨 칩(사용자).
         self.meters_button = Chip('Meters', lambda: self.toggle_part('show_meters'),

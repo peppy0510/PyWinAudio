@@ -325,6 +325,9 @@ class Knob(Control):
         self.step = step
         self.origin = None
 
+    # 참을 돌려주면 흐리게 그린다 — 이 손잡이를 켜고 끄는 단추가 꺼져 있을 때. 돌리는 것은 그대로 된다.
+    inactive = None
+
     def to_ratio(self, value):
         value = min(max(value, self.low), self.high)
         if self.log:
@@ -384,9 +387,12 @@ class Knob(Control):
         cx = rect.x + rect.width / 2
         radius = min(rect.width / 2 - 4, KNOB_RADIUS)
         # 플러그인 파라미터 이름은 길이를 플러그인이 정한다. 옆 손잡이에 닿기 전에 자른다.
+        idle = bool(self.inactive and self.inactive())
+        if idle:
+            accent = RACK['led_off']
         label, size = fit_label(gc, self.label, rect.width - 2)
-        draw_text(gc, label, cx, rect.y + (LABEL_SIZE - size), size, RACK['dim'], align='center',
-                  engraved=True)
+        draw_text(gc, label, cx, rect.y + (LABEL_SIZE - size), size, RACK['faint'] if idle else RACK['dim'],
+                  align='center', engraved=True)
         # 이름 글씨 아래로 값 호의 바깥 끝까지 LABEL_GAP 을 띄운다. 호는 반지름 + 3 에 3 화소 굵기.
         cy = rect.y + LABEL_HEIGHT + LABEL_GAP + radius + 4.5
 
@@ -413,7 +419,7 @@ class Knob(Control):
         gc.DrawEllipse(cx - body, cy - body, body * 2, body * 2)
         angle = KNOB_START + KNOB_SWEEP * ratio
         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(
-            wx.Colour(RACK['text'] if self.enabled else RACK['faint'])).Width(2)
+            wx.Colour(RACK['text'] if self.enabled and not idle else RACK['faint'])).Width(2)
             .Cap(wx.CAP_ROUND)))
         gc.StrokeLine(cx + math.cos(angle) * body * 0.20, cy + math.sin(angle) * body * 0.20,
                       cx + math.cos(angle) * body * 0.78, cy + math.sin(angle) * body * 0.78)
@@ -427,7 +433,7 @@ class Knob(Control):
                           align=align)
         value = self.text(self.get()) if self.enabled else '—'
         draw_text(gc, value, cx, cy + radius + 4, 7.5,
-                  RACK['text'] if self.enabled else RACK['faint'], align='center')
+                  RACK['text'] if self.enabled and not idle else RACK['faint'], align='center')
 
 
 class Switch(Control):

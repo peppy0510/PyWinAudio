@@ -35,7 +35,7 @@
  *     의 트랜지언트 처리와 같은 생각).
  *     150 Hz 위를 150–600 Hz·600 Hz–3 kHz·3 kHz 위 세 대역으로 나눠(Linkwitz-Riley 4 차) 대역마다
  *     S/M 을 재고 따로 채운다(Ozone Imager 처럼 — 사용자). 목표는 Wide Target 에 중저역 -5 dB,
- *     중역 0, 고역 +2 dB. 판정 위 끝은 10 kHz — 전 대역 한 덩어리로 재면 MP3 가 고역에 남긴
+ *     중역 0, 고역은 Air 손잡이(-6~+6 dB, 처음 +2). 판정 위 끝은 10 kHz — 전 대역 한 덩어리로 재면 MP3 가 고역에 남긴
  *     S(-20 dB 안팎) 때문에 거의 모노인 곡도 반쯤 스테레오로 읽혔다.
  *     가짜 S 는 모자란 만큼만 채운다: 목표 넓이(Wide Target)의 S 에너지에서 지금 있는 S 를
  *     뺀 나머지. 이미 목표만큼 넓은 소리에는 아무것도 더하지 않아 그대로 나가고, 모노는 목표
@@ -145,32 +145,44 @@ enum {
     P_TARGET,
     P_MAX_GAIN,
     P_SPEED,
-    P_STEREO,
+    P_BALANCE,
+    P_WIDTH_LIMIT,
     P_WIDTH,
     P_BASS_MONO,
     P_MONO_WIDE,
     P_WIDE_AMOUNT,
+    P_AIR,
     P_LIMITER,
     P_CEILING,
     PARAM_COUNT
 };
 
 static const char *PARAM_NAMES[PARAM_COUNT] = {
-    "AGC", "Target", "Max Gain", "Speed", "Stereo", "Max Width", "Bass Mono", "Mono Wide",
-    "Wide Target", "Limiter", "Ceiling"
+    "AGC", "Target", "Max Gain", "Speed", "Balance", "Width Limit", "Max Width", "Bass Mono",
+    "Mono Wide", "Wide Target", "Air", "Limiter", "Ceiling"
 };
-/* 구역: 1 AGC, 2 Stereo, 3 Limiter. 랙이 구역 사이에 금을 긋는다. */
-static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3};
+/* 구역: 1 AGC, 2 Stereo, 3 Limiter. 랙이 구역 사이에 금을 긋는다.
+ * 예전 Stereo 하나가 좌우 균형과 폭 상한을 함께 켜고 꺼서, 스테레오 처리가 다 꺼지는 것처럼 읽혔다 —
+ * Balance·Width Limit 둘로 나눴다(사용자). 랙은 저장된 Stereo 값을 둘에 옮긴다. */
+static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3};
 static const char *CATEGORY_LABELS[4] = {"", "AGC", "Stereo", "Limiter"};
 static const char *PARAM_LABELS[PARAM_COUNT] = {
-    "", "LUFS", "dB", "s", "", "S/M dB", "", "", "S/M dB", "", "dB"
+    "", "LUFS", "dB", "s", "", "", "S/M dB", "", "", "S/M dB", "dB", "", "dB"
 };
-/* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 스테레오 보정 켬, S/M -10 dB, 저역 모노 켬,
- * (폭 상한 S/M -6 dB), 모노 넓히기 켬, 목표 넓이 S/M -7.5 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지
- * 않는다 — 실측 진짜 스테레오 -6.5 보다 조금 좁게, 사용자), 리미터 켬, -1 dBFS. */
+/* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 좌우 균형 켬, 폭 상한 켬(S/M -6 dB), 저역 모노 켬,
+ * 모노 넓히기 켬, 목표 넓이 S/M -7.5 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지 않는다 —
+ * 실측 진짜 스테레오 -6.5 보다 조금 좁게, 사용자), 고역 몫(Air) +2 dB(3 대역 전과 같은 소리),
+ * 리미터 켬, -1 dBFS. */
 static const float PARAM_DEFAULTS[PARAM_COUNT] = {
-    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 1.0f, 5.0f / 6.0f
+    1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 8.0f / 12.0f, 1.0f,
+    5.0f / 6.0f
 };
+
+static int is_switch(int32_t index)
+{
+    return index == P_AGC || index == P_BALANCE || index == P_WIDTH_LIMIT || index == P_BASS_MONO ||
+           index == P_MONO_WIDE || index == P_LIMITER;
+}
 
 #define TARGET_LOW -24.0
 #define TARGET_HIGH -8.0
@@ -196,10 +208,13 @@ static const float PARAM_DEFAULTS[PARAM_COUNT] = {
 #define WIDE_HIGH 0.0
 /* 모노 넓히기는 150 Hz 위를 세 대역으로 나눠 따로 재고 따로 채운다(Ozone Imager 처럼 — 사용자).
  * 목표는 Wide Target 에 대역마다 더하는 값: 중저역은 적게(뭉개지고 위상감이 나기 쉽다), 고역은
- * 많이(공기감). 판정 맨 위는 10 kHz 에서 끊는다 — MP3 가 잘라 낸 위쪽은 재지 않는다. */
+ * Air 로(공기감 — 진짜 스테레오 곡의 고역까지 넓히면 귀로 낮출 수 있게 손잡이로 뺐다, 사용자). 판정 맨 위는 10 kHz 에서 끊는다 — MP3 가 잘라 낸 위쪽은 재지 않는다. */
 #define BANDS 3
 static const double BAND_EDGES[BANDS + 1] = {150.0, 600.0, 3000.0, 10000.0};
-static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 2.0};
+/* 고역 몫은 Air 손잡이가 정한다(여기 마지막 칸은 쓰지 않는다). */
+static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
+#define AIR_LOW -6.0
+#define AIR_HIGH 6.0
 #define WIDE_HZ 150.0
 #define MAX_WIDE_DELAY 8192    /* 192 kHz 에서 42 ms — 가장 긴 갈래 27 ms 를 넉넉히 담는다 */
 #define VELVET_LENGTH 0.025      /* 초 */
@@ -376,6 +391,11 @@ static double get_width(const AutoMaster *self)
 static double get_wide_amount(const AutoMaster *self)
 {
     return WIDE_LOW + (WIDE_HIGH - WIDE_LOW) * self->params[P_WIDE_AMOUNT];
+}
+
+static double get_air(const AutoMaster *self)
+{
+    return AIR_LOW + (AIR_HIGH - AIR_LOW) * self->params[P_AIR];
 }
 
 static double clamp(double value, double low, double high)
@@ -570,14 +590,15 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
 
     int agc = is_on(self->params[P_AGC]);
     int limit = is_on(self->params[P_LIMITER]);
-    int stereo = is_on(self->params[P_STEREO]);
+    int balance = is_on(self->params[P_BALANCE]);
+    int limit_width = is_on(self->params[P_WIDTH_LIMIT]);
     int bass_mono = is_on(self->params[P_BASS_MONO]);
     double width = get_width(self);
     int mono_wide = is_on(self->params[P_MONO_WIDE]);
     /* 대역마다 목표 S/M 에너지 비 — Wide Target 에 대역 몫을 더하되 0 dB(S = M) 를 넘지 않게. */
     double wide_target[BANDS];
     for (int band = 0; band < BANDS; band++) {
-        double db = get_wide_amount(self) + BAND_OFFSET[band];
+        double db = get_wide_amount(self) + (band == BANDS - 1 ? get_air(self) : BAND_OFFSET[band]);
         wide_target[band] = pow(10.0, (db < 0.0 ? db : 0.0) / 10.0);
     }
 
@@ -655,17 +676,21 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             }
         }
         double want_balance = 0.0, want_side = 0.0;
-        if (stereo && self->left_power > 1e-12 && self->right_power > 1e-12) {
-            want_balance = clamp(10.0 * log10(self->left_power / self->right_power),
-                                 -BALANCE_LIMIT, BALANCE_LIMIT);
+        if (self->left_power > 1e-12 && self->right_power > 1e-12) {
+            if (balance)
+                want_balance = clamp(10.0 * log10(self->left_power / self->right_power),
+                                     -BALANCE_LIMIT, BALANCE_LIMIT);
             double ratio = 10.0 * log10((self->side_power + 1e-20) / (self->mid_power + 1e-20));
-            if (ratio > MONO_SOURCE)
+            if (limit_width && ratio > MONO_SOURCE)
                 want_side = clamp(width - ratio, -SIDE_LIMIT, 0.0);
         }
-        if (sounding || !stereo) {
+        /* 끄면 소리가 없어도 0 으로 돌아간다. 켜져 있을 때 무음이면 재기와 함께 멈춘다. */
+        {
             double f = self->follow_coef * (sounding ? pace : 1.0);
-            self->balance_db += (want_balance - self->balance_db) * f;
-            self->side_db += (want_side - self->side_db) * f;
+            if (sounding || !balance)
+                self->balance_db += (want_balance - self->balance_db) * f;
+            if (sounding || !limit_width)
+                self->side_db += (want_side - self->side_db) * f;
         }
         /* 모노 넓히기: 대역마다 목표 S 에너지에서 지금 있는 S 를 뺀 만큼만 가짜 S 로 채운다. */
         int widening = 0;
@@ -681,7 +706,8 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             widening |= self->wide_mix[band] > 1e-4;
         }
         double mixed[BANDS] = {0.0, 0.0, 0.0};
-        if (stereo || bass_mono || widening) {
+        if (balance || limit_width || bass_mono || widening ||
+            fabs(self->balance_db) > 1e-3 || fabs(self->side_db) > 1e-3) {
             left *= pow(10.0, -self->balance_db / 40.0);
             right *= pow(10.0, self->balance_db / 40.0);
             double mid = (left + right) * 0.5;
@@ -815,8 +841,7 @@ static void set_parameter(AEffect *effect, int32_t index, float value)
         value = 0.0f;
     if (value > 1.0f)
         value = 1.0f;
-    if (index == P_AGC || index == P_STEREO || index == P_BASS_MONO || index == P_MONO_WIDE ||
-        index == P_LIMITER)
+    if (is_switch(index))
         value = is_on(value) ? 1.0f : 0.0f;
     self->params[index] = value;
 }
@@ -841,11 +866,15 @@ static void get_display(AutoMaster *self, int32_t index, char *text)
 {
     switch (index) {
     case P_AGC:
-    case P_STEREO:
+    case P_BALANCE:
+    case P_WIDTH_LIMIT:
     case P_BASS_MONO:
     case P_MONO_WIDE:
     case P_LIMITER:
         strcpy(text, is_on(self->params[index]) ? "ON" : "OFF");
+        break;
+    case P_AIR:
+        sprintf(text, "%+.1f", get_air(self));
         break;
     case P_TARGET:
         sprintf(text, "%.1f", get_target(self));
@@ -928,8 +957,7 @@ static intptr_t dispatch(AEffect *effect, int32_t opcode, int32_t index, intptr_
                 count += PARAM_CATEGORIES[other] == category;
             copy_text(props->label, PARAM_NAMES[index], sizeof(props->label));
             props->flags = PARAM_SUPPORTS_DISPLAY_CATEGORY;
-            if (index == P_AGC || index == P_STEREO || index == P_BASS_MONO ||
-                index == P_MONO_WIDE || index == P_LIMITER)
+            if (is_switch(index))
                 props->flags |= PARAM_IS_SWITCH;
             props->category = category;
             props->numParametersInCategory = count;
