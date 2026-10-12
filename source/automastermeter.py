@@ -18,8 +18,8 @@ from ctypes import wintypes
 
 MAGIC = 0x4D415750  # 'PWAM'
 SLOTS = 8
-# 칸 배치가 바뀌면 플러그인과 함께 이름의 판(.v3)을 올린다.
-NAMES = ('Global\\PyWinAudioAutoMaster.v3', 'Local\\PyWinAudioAutoMaster.v3')
+# 칸 배치가 바뀌면 플러그인과 함께 이름의 판(.v4)을 올린다.
+NAMES = ('Global\\PyWinAudioAutoMaster.v4', 'Local\\PyWinAudioAutoMaster.v4')
 FILE_MAP_WRITE = 0x0002
 FILE_MAP_READ = 0x0004
 # 이보다 오래 소식이 없으면(소리가 멈췄거나 플러그인이 내려갔으면) 값을 보이지 않는다.
@@ -32,7 +32,8 @@ class Slot(ctypes.Structure):
                 ('side_db', ctypes.c_float), ('fill_db', ctypes.c_float),
                 ('limiter_db', ctypes.c_float), ('loudness', ctypes.c_float),
                 ('sounding', ctypes.c_int32), ('phase_flip', ctypes.c_int32),
-                ('fill_band_db', ctypes.c_float * 3), ('phase_delay_ms', ctypes.c_float)]
+                ('fill_band_db', ctypes.c_float * 3), ('phase_delay_ms', ctypes.c_float),
+                ('band_width_db', ctypes.c_float * 3), ('band_target_db', ctypes.c_float * 3)]
 
 
 class Block(ctypes.Structure):
@@ -92,6 +93,9 @@ class Reader:
                 'fill': slot.fill_db, 'fill_low': slot.fill_band_db[0], 'fill_mid': slot.fill_band_db[1],
                 'fill_high': slot.fill_band_db[2], 'limiter': slot.limiter_db, 'loudness': slot.loudness,
                 'phase': slot.phase_delay_ms, 'phase_flip': bool(slot.phase_flip),
+                # 대역마다 들어온 넓이·채운 양·목표(S/M dB). 나간 넓이 = 들어온 것 + 채운 것(에너지 합).
+                'bands': [{'in': slot.band_width_db[k], 'fill': slot.fill_band_db[k],
+                           'target': slot.band_target_db[k]} for k in range(3)],
                 'sounding': bool(slot.sounding)}
 
 

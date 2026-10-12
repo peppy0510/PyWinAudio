@@ -47,6 +47,7 @@ from rackui import get_pen
 from rackui import get_db_text
 from rackui import get_hz_text
 from rackui import get_short_hz
+from rackui import mix
 from rackui import set_font
 
 
@@ -790,11 +791,12 @@ class VstUnit(Unit):
     METER_ROW = 26
     METER_CELL = 112
     METER_GAP = 16
-    # 모노 채움은 대역마다(150–600 Hz·600 Hz–3 kHz·3 kHz 위 — 사용자), 위상은 맞춘 시간(± ms)과 극성.
+    # 첫 줄은 단계마다 거는 양, 그 뒤 대역 셋(사용자: 대역별 처리가 한눈에). 대역 칸은 넓이(S/M dB) 막대
+    # 하나에 들어온 넓이(옅게)·채워 넓어진 만큼(밝게)·목표(눈금)를 겹친다. 위상은 맞춘 시간(± ms)과 극성.
     METERS = (('agc', 'AGC', -12.0, 18.0, True), ('balance', 'BALANCE', -6.0, 6.0, True),
               ('side', 'WIDTH CUT', -6.0, 0.0, False), ('phase', 'PHASE', -2.0, 2.0, True),
-              ('fill_low', 'FILL LOW', -30.0, 0.0, False), ('fill_mid', 'FILL MID', -30.0, 0.0, False),
-              ('fill_high', 'FILL HIGH', -30.0, 0.0, False), ('limiter', 'LIMITER', -12.0, 0.0, False))
+              ('limiter', 'LIMITER', -12.0, 0.0, False), ('band0', 'LOW 150–600', -30.0, 0.0, False),
+              ('band1', 'MID 600–3K', -30.0, 0.0, False), ('band2', 'HIGH 3K+', -30.0, 0.0, False))
     LIMITER_FALL = 12.0
     meter_values = None
     meter_rect = None
@@ -1056,6 +1058,9 @@ class VstUnit(Unit):
             x = rect.x + column * (width + gap)
             top = rect.y + row * (self.METER_ROW + self.RULE_GAP)
             draw_text(gc, label, x, top, 7, RACK['dim'], bold=True)
+            if key.startswith('band'):
+                self.draw_band_meter(gc, x, top, width, label, values, int(key[4:]), low, high)
+                continue
             value = None if values is None else values.get('limiter_hold' if key == 'limiter' else key)
             fill = key.startswith('fill')
             if value is None:
@@ -1088,6 +1093,28 @@ class VstUnit(Unit):
                         fill_rect(gc, self.accent, side, bar.y, 2, bar.height)
             if bipolar:
                 fill_rect(gc, RACK['dim'], zero, bar.y - 2, 1, bar.height + 4)
+
+    def draw_band_meter(self, gc, x, top, width, label, values, band, low, high):
+        '''대역 하나의 넓이: 들어온 만큼 옅게, 채워 넓어진 만큼 밝게, 목표에 눈금. 숫자는 나간 넓이.'''
+        draw_text(gc, label, x, top, 7, RACK['dim'], bold=True)
+        bar = wx.Rect(int(x), top + 17, int(width), 5)
+        fill_rect(gc, RACK['track'], bar.x, bar.y, bar.width, bar.height, 2)
+        bands = (values or {}).get('bands')
+        if not bands:
+            draw_text(gc, '--', x + width, top, 7, RACK['faint'], align='right')
+            return
+        info = bands[band]
+        have = 10 ** (info['in'] / 10) if info['in'] > -100 else 0.0
+        added = 10 ** (info['fill'] / 10) if info['fill'] > -100 else 0.0
+        out = 10 * math.log10(have + added) if have + added > 1e-12 else -120.0
+        to_x = lambda db: bar.x + bar.width * (min(max(db, low), high) - low) / (high - low)
+        draw_text(gc, '%.1f dB' % out if out > low else 'mono', x + width, top, 7, RACK['text'], align='right')
+        start, middle, end = bar.x, to_x(info['in']), to_x(out)
+        if middle - start >= 1:
+            fill_rect(gc, mix(self.accent, RACK['track'], 0.55), start, bar.y, middle - start, bar.height, 2)
+        if end - middle >= 1:
+            fill_rect(gc, self.accent, middle, bar.y, end - middle, bar.height, 2)
+        fill_rect(gc, RACK['text'], to_x(info['target']), bar.y - 2, 1, bar.height + 4)
 
     # 랙 손잡이로 둘 까닭이 없는 것 — 편집기 창 크기만 바꾸는 단추(사용자).
     HIDDEN = ('large gui',)

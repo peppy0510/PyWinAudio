@@ -255,8 +255,8 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define METER_MAGIC 0x4D415750 /* 'PWAM' */
 /* 칸 배치가 바뀌면 이름도 바꾼다 — 옛 DLL 이 아직 도는 엔진이 같은 이름에 짧은 칸으로 만들어 둔
  * 공유 메모리에 새 배치로 쓰면 넘친다. */
-#define METER_VERSION 3
-#define METER_NAME L"PyWinAudioAutoMaster.v3"
+#define METER_VERSION 4
+#define METER_NAME L"PyWinAudioAutoMaster.v4"
 #define METER_SLOTS 8
 
 typedef struct {
@@ -272,6 +272,8 @@ typedef struct {
     int32_t phase_flip;     /* R 극성을 뒤집고 있으면 1 */
     float fill_band_db[3];  /* 대역마다 섞인 가짜 S(150–600 Hz·600 Hz–3 kHz·3 kHz 위) */
     float phase_delay_ms;   /* 맞추느라 늦추고 있는 시간(+ 면 L 을, - 면 R 을) */
+    float band_width_db[3]; /* 대역마다 들어온 소리의 넓이(S/M dB, 판정에 쓰는 평균) */
+    float band_target_db[3];/* 대역마다 목표 넓이(Wide Target + 대역 몫) */
 } MeterSlot;
 
 typedef struct {
@@ -1036,6 +1038,13 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             slot->fill_band_db[band] = part > 1e-12 ? (float)(10.0 * log10(part)) : -120.0f;
         }
         slot->phase_flip = self->flipped;
+        for (int band = 0; band < BANDS; band++) {
+            double have = self->detect_mid[band] > 1e-14 ?
+                          self->detect_side[band] / self->detect_mid[band] : 0.0;
+            slot->band_width_db[band] = have > 1e-12 ? (float)(10.0 * log10(have)) : -120.0f;
+            double db = get_wide_amount(self) + (band == BANDS - 1 ? get_air(self) : BAND_OFFSET[band]);
+            slot->band_target_db[band] = (float)(db < 0.0 ? db : 0.0);
+        }
         slot->phase_delay_ms = (float)(1000.0 * self->lag / self->rate);
         slot->tick = (LONG64)GetTickCount64();
     }
