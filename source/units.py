@@ -201,12 +201,15 @@ class Unit:
             index = units.index(self)
             self.up.enabled = index > 0
             self.down.enabled = index < len(units) - 1
-        left, right = rect.x + EAR + INSET, rect.x + rect.width - EAR - INSET + 2
+        # 오른쪽 단추(옮기기·빼기)는 글리프 끝이 왼쪽 접기 글리프와 같은 거리(실측 14)에 서게 — +2 일 때
+        # 18 대 15 로 오른쪽이 남아 보였다(사용자).
+        left, right = rect.x + EAR + INSET, rect.x + rect.width - EAR - INSET + 6
         middle = rect.y + FOLDED // 2
         self.fold.glyph = 'right' if self.folded else 'down'
         self.fold.tip = 'Unfold' if self.folded else 'Fold'
-        self.fold.rect = wx.Rect(left - 4, middle - FOLD // 2, FOLD, FOLD)
-        self.power.rect = wx.Rect(left + FOLD, middle - 7, 14, 14)
+        # 접기 글리프의 좌우 빈 곳을 같게(사용자) — 왼쪽 띠에서 글리프까지 = 글리프에서 불까지 12 화소.
+        self.fold.rect = wx.Rect(left - 5, middle - FOLD // 2, FOLD, FOLD)
+        self.power.rect = wx.Rect(left + FOLD + 1, middle - 7, 14, 14)
         x = right
         for button in (self.remove, self.down, self.up):
             x -= IconButton.SIZE
@@ -236,7 +239,7 @@ class Unit:
     def draw(self, gc):
         rect = self.rect
         draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR, self.accent)
-        left = self.power.rect.x + 22
+        left = self.power.rect.x + 21  # 불을 1 화소 옮겨도 제목은 다른 판과 같은 자리
         draw_title(gc, left, rect.y, self.get_title(), self.get_subtitle(),
                    self.get_subtitle_tone(), max(0, self.header_right - left))
         if self.folded:
@@ -1376,7 +1379,7 @@ class AutoMasterUnit(VstUnit):
 
     def layout(self, gc, rect):
         super().layout(gc, rect)
-        left = self.power.rect.x + 22
+        left = self.power.rect.x + 21  # 불을 1 화소 옮겨도 제목은 다른 판과 같은 자리
         set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
         x = left + gc.GetTextExtent(self.get_title().upper())[0] + 14
         middle = rect.y + FOLDED // 2

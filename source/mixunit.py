@@ -326,7 +326,8 @@ class MixerUnit:
         left = rect.x + EAR + INSET
         self.fold.glyph = 'right' if self.folded else 'down'
         self.fold.tip = 'Unfold' if self.folded else 'Fold'
-        self.fold.rect = wx.Rect(left - 4, rect.y + (FOLDED - FOLD) // 2, FOLD, FOLD)
+        # 접기 글리프의 좌우 빈 곳을 같게(사용자, 장치 판과 같은 12 화소).
+        self.fold.rect = wx.Rect(left - 5, rect.y + (FOLDED - FOLD) // 2, FOLD, FOLD)
         if self.folded:
             return
         per_row = self.get_per_row(rect.width)
@@ -373,7 +374,7 @@ class MixerUnit:
         # 제목은 다른 장치들과 같은 x 에 선다.
         # 표시는 -9 … +11 폭이라 가운데를 한 칸 왼쪽으로, 키는 불 표시(11)와 같게 줄인다.
         # 누르는 단추가 아니라 회색(master=False). 장치 색은 누를 수 있는 것에만 쓴다.
-        self.draw_speaker(gc, rect.x + EAR + INSET + FOLD + 7 - 0.6, rect.y + FOLDED / 2, False, 0.62)
+        self.draw_speaker(gc, rect.x + EAR + INSET + FOLD + 8 - 0.6, rect.y + FOLDED / 2, False, 0.62)
         left = rect.x + EAR + INSET + FOLD + 22
         draw_title(gc, left, rect.y, 'Mixer', self.get_subtitle(),
                    RACK['warn'] if self.mixer.error else RACK['dim'],

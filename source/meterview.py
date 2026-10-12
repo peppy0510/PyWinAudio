@@ -476,9 +476,11 @@ class MeterView(wx.Panel):
         left = plate.x + PAD
         right = plate.x + plate.width - PAD
         middle = plate.y + FOLDED // 2
-        regions = {'plate': plate, 'fold': wx.Rect(left - 4, middle - FOLD // 2, FOLD, FOLD),
+        # 접기 글리프의 좌우 빈 곳을 같게(사용자, 장치 판과 같은 12 화소).
+        regions = {'plate': plate, 'fold': wx.Rect(left - 5, middle - FOLD // 2, FOLD, FOLD),
                    'icon': wx.Rect(left + FOLD, middle - 7, 14, 14),
-                   'pin': wx.Rect(right - PIN_WIDTH + 2, middle - PIN // 2, PIN_WIDTH, PIN),
+                   # PIN 오른쪽 끝은 아래 화면 테두리 끝과 같은 줄 — 5 화소 안쪽이라 오른쪽이 남아 보였다(사용자).
+                   'pin': wx.Rect(plate.x + plate.width - TIGHT_PAD - 1 - PIN_WIDTH, middle - PIN // 2, PIN_WIDTH, PIN),
                    'clips': [], 'chips': {}}
         dc = wx.ScreenDC()
         dc.SetFont(get_font(TITLE_SIZE, bold=True))
