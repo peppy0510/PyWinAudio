@@ -75,6 +75,11 @@ class MainFrame(wx.Frame):
         self.book = wx.Simplebook(self)
         # 계기판은 랙 위에 고정해 두고 랙만 굴린다. 따로 다시 그려져 랙을 건드리지 않는다.
         self.rackpage = wx.Panel(self.book)
+        # 바탕은 랙과 계기판이 늘 덮는다. 크기가 바뀔 때마다 바탕을 먼저 지우면 둘이 다시 그려지기 전에
+        # 지운 색이 비쳐 깜빡였다(사용자) — 지우지 않는다.
+        self.rackpage.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.rackpage.Bind(wx.EVT_ERASE_BACKGROUND, lambda event: None)
+        self.rackpage.Bind(wx.EVT_PAINT, lambda event: wx.PaintDC(self.rackpage))
         self.meters = MeterView(self.rackpage, self.store_settings,
                                 settings.get('meters_folded', False),
                                 settings.get('meters_pinned', True),
@@ -129,6 +134,14 @@ class MainFrame(wx.Frame):
         self.sidemenu.set_selection(self.get_menu_index(index))
 
     def place_rackpage(self):
+        # 계기판과 랙을 하나씩 옮기는 사이의 반쯤 놓인 모습이 그려지지 않게, 다 옮긴 뒤 한 번에 그린다.
+        self.rackpage.Freeze()
+        try:
+            self.lay_rackpage()
+        finally:
+            self.rackpage.Thaw()
+
+    def lay_rackpage(self):
         width, height = self.rackpage.GetClientSize()
         # 한 단일 때: 핀을 꽂으면 계기판은 랙 위에 고정, 빼면 랙 맨 아래(ADD 다음)에 함께 구른다.
         meters = self.meters
