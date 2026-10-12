@@ -40,6 +40,8 @@ class SettingsBox(wx.Panel):
                                  'Keep the window above others', on_change)
         self.dark = SettingCard(self, theme, 'Dark theme',
                                 'Use the dark colour scheme for the window', on_change)
+        self.wide = SettingCard(self, theme, 'Wide layout',
+                                'Lay the rack out in columns when the window is wide', on_change)
         self.status = NoticeCard(self, theme, 'Equalizer APO', '')
         self.devices = ButtonCard(self, theme, 'Devices',
                                   'Pick the outputs Equalizer APO processes',
@@ -52,16 +54,17 @@ class SettingsBox(wx.Panel):
         self.shortcut = ButtonCard(self, theme, 'Start menu',
                                    'Put a shortcut in the Start menu',
                                    'Create', self.on_shortcut)
-        self.cards = (self.ontop, self.dark, self.status, self.devices, self.folder,
+        self.cards = (self.ontop, self.dark, self.wide, self.status, self.devices, self.folder,
                       self.unlink, self.shortcut)
 
         self.ontop.SetValue(settings.get('on_top', False))
         self.dark.SetValue(settings.get('theme', 'dark') == 'dark')
+        self.wide.SetValue(settings.get('wide_layout', True))
 
         self.groups = []
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.AddSpacer(MARGIN)
-        for title, cards in (('Window', (self.ontop, self.dark)),
+        for title, cards in (('Window', (self.ontop, self.dark, self.wide)),
                              ('Equalizer APO', (self.status, self.devices, self.folder,
                                                 self.unlink)),
                              ('Shortcut', (self.shortcut,))):

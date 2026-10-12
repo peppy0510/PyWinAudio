@@ -335,6 +335,10 @@ class MeterView(wx.Panel):
         # 부분이 판 뒤에 숨어 굴릴 때 막대가 늘었다 줄었다 하는 것처럼 보였다. 그때는 주 창이
         # 여백만큼 좁게 놓고 이 값을 0 으로 둔다.
         self.right_margin = MARGIN
+        self.left_margin = MARGIN
+        # 넓은 창에서 랙이 여러 단이면 이 판도 랙의 한 칸으로 단에 들어간다. 그때 핀은 맨 앞에
+        # 둘지 맨 끝에 둘지만 정하고, 판은 랙과 함께 구른다.
+        self.flowing = False
         # 판의 키나 핀이 바뀌면 부르는 자리. 판을 놓는 쪽(주 창)이 채운다.
         self.on_height = lambda: None
         if self.is_running():
@@ -438,7 +442,7 @@ class MeterView(wx.Panel):
     # ------------------------------------------------------------ 자리
 
     def get_top(self):
-        return MARGIN if self.pinned else 0
+        return MARGIN if self.pinned and not self.flowing else 0
 
     def get_height(self, width):
         top = self.get_top()
@@ -466,7 +470,8 @@ class MeterView(wx.Panel):
         '''이름 띠: 접기 · 켜기 · 제목 · 구역 토글 단추들 … 장치 이름 · PIN. 그 아래 화면 하나에
         보이는 구역만 차례로 쌓고 사이에 금 한 줄. 화면 테두리는 판 가장자리와 띠 아래 금에서
         PAD 만큼 떨어진다.'''
-        plate = wx.Rect(MARGIN, self.get_top(), width - MARGIN - self.right_margin,
+        plate = wx.Rect(self.left_margin, self.get_top(),
+                        width - self.left_margin - self.right_margin,
                         self.get_height(width) - self.get_top())
         left = plate.x + PAD
         right = plate.x + plate.width - PAD
@@ -623,7 +628,8 @@ class MeterView(wx.Panel):
         gc = wx.GraphicsContext.Create(dc)
         regions = self.layout(width)
         plate = regions['plate']
-        draw_rails(gc, MARGIN, 0, width - MARGIN - self.right_margin, height, EAR)
+        draw_rails(gc, self.left_margin, 0, width - self.left_margin - self.right_margin, height,
+                   EAR)
         face, accent = FACES['master']
 
         # 이름 띠 — 랙의 장치와 같은 자리, 같은 글씨. 접어도 같다.
@@ -876,7 +882,8 @@ class MeterView(wx.Panel):
         if self.buffer is None or self.buffer.GetSize() != wx.Size(width, height):
             self.buffer = wx.Bitmap(max(1, width), max(1, height))
         dc = wx.BufferedPaintDC(self, self.buffer)
-        key = (width, height, self.folded, self.pinned, self.right_margin,
+        key = (width, height, self.folded, self.pinned, self.flowing, self.left_margin,
+               self.right_margin,
                tuple(self.parts.values()), getattr(self, 'hover_target', None))
         if self.background is None or self.background_key != key:
             self.background = self.build_background(width, height)
@@ -1429,7 +1436,7 @@ class MeterView(wx.Panel):
 
     def on_wheel(self, event):
         '''핀을 뺐을 때는 이 판도 랙의 한 칸이다. 휠은 랙을 굴린다.'''
-        if not self.pinned and self.on_wheel_rack is not None:
+        if (not self.pinned or self.flowing) and self.on_wheel_rack is not None:
             self.on_wheel_rack(event)
 
     on_wheel_rack = None

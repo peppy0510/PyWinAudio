@@ -66,6 +66,32 @@ SCROLL_MIN = 24
 SCROLL_HOLD = 0.7
 SCROLL_FADE = 0.4
 SCROLL_STEP = 16
+# 넓은 창에서 판을 여러 단으로 펴는 기준 폭 (PyWinAgent 와 같다).
+TWO_COLUMNS = 820
+THREE_COLUMNS = 1240
+
+
+def split_columns(heights, count):
+    '''차례를 지킨 채 count 개의 단으로 끊는다. 가장 높은 단이 가장 낮아지는 자리를
+    다 따져 고른다 (판이 열 개 안쪽이라 순식간이다). 단마다 첫 판의 자리를 준다.'''
+    prefix = [0]
+    for height in heights:
+        prefix.append(prefix[-1] + height)
+    n = len(heights)
+    best = {1: prefix[:]}
+    cut = {1: [0] * (n + 1)}
+    for c in range(2, count + 1):
+        best[c], cut[c] = [], []
+        for i in range(n + 1):
+            # 같으면 뒤쪽에서 끊는다. 판이 단보다 적을 때 빈 단이 앞이 아니라 끝에 남게.
+            choice = min(range(i, -1, -1), key=lambda j: max(best[c - 1][j], prefix[i] - prefix[j]))
+            best[c].append(max(best[c - 1][choice], prefix[i] - prefix[choice]))
+            cut[c].append(choice)
+    starts, end = [], n
+    for c in range(count, 0, -1):
+        starts.insert(0, cut[c][end])
+        end = cut[c][end]
+    return starts
 
 
 class MasterUnit:
@@ -186,6 +212,29 @@ class AddSlot:
             button.draw(gc, FACES['master'][1])
 
 
+class AnalyzerSlot:
+    '''여러 단일 때 Analyzer 판이 앉을 랙 칸. 판은 따로 된 창이라 여기서는 자리만 잡고
+    그리지 않는다. 주 창이 이 자리에 판을 옮겨 놓는다.'''
+
+    height = 0
+
+    def __init__(self, rack):
+        self.rack = rack
+        self.rect = wx.Rect()
+
+    def get_height(self, width):
+        return self.rack.analyzer.get_height(width)
+
+    def get_controls(self):
+        return []
+
+    def layout(self, gc, rect):
+        self.rect = rect
+
+    def draw(self, gc):
+        pass
+
+
 class RemoveConfirm:
     '''빼기 전에 그 장치 판 위에 덮는 물음. 무엇을 빼는지 이름으로 묻고, 단추 둘 가운데
     Remove 를 눌러야만 뺀다. 그 밖의 누름과 Esc 는 모두 그만두기다.'''
@@ -266,6 +315,10 @@ class RackView(Canvas):
         self.master = MasterUnit(self)
         self.mixer = MixerUnit(self, mixer if mixer is not None else {})
         self.slot = AddSlot(self)
+        # 주 창이 Analyzer 판을 넘겨준다. 여러 단일 때만 랙의 한 칸이 된다.
+        self.analyzer = None
+        self.analyzer_slot = AnalyzerSlot(self)
+        self.columns = 1
         self.units = [build_unit(data, self) for data in chain]
         self.offset = 0
         self.total = 0
@@ -281,6 +334,8 @@ class RackView(Canvas):
         self.meters_y = 0
         # 맨 위 판 앞의 틈. 위에 핀 꽂은 Analyzer 가 있으면 장치 사이 GAP, 없으면 창 여백 MARGIN(주 창이 정한다).
         self.top_gap = MARGIN
+        # 설정의 Wide layout. 끄면 창이 넓어도 한 단.
+        self.wide = True
         self.on_scroll = None
         self.notified = None
         self.scrolled_at = 0.0
@@ -484,7 +539,14 @@ class RackView(Canvas):
     def get_blocks(self):
         # 신호 흐름 순: 앱 볼륨(Mixer) → 체인 전원 띠 → 장치들 → ADD(사용자). 전원 띠가 Mixer 위에
         # 있으면 Mixer 까지 끄는 것처럼 보였다.
-        return [self.mixer, self.master] + self.units + [self.slot]
+        blocks = [self.mixer, self.master] + self.units + [self.slot]
+        # 여러 단이면 Analyzer 도 다른 판과 같이 단에 든다. 핀을 꽂으면 맨 앞, 빼면 맨 끝.
+        if self.analyzer is not None and self.columns > 1:
+            if self.analyzer.pinned:
+                blocks.insert(0, self.analyzer_slot)
+            else:
+                blocks.append(self.analyzer_slot)
+        return blocks
 
     def get_controls(self):
         # 묻는 동안 그 장치의 손잡이는 덮개 아래에 있다. 덮개 단추만 받는다.
@@ -497,13 +559,56 @@ class RackView(Canvas):
             for control in block.get_controls():
                 yield control
 
+    def get_column_count(self, width):
+        if not self.wide or width < TWO_COLUMNS:
+            return 1
+        return 3 if width >= THREE_COLUMNS else 2
+
+    def measure(self, gc, block, width):
+        if hasattr(block, 'get_height'):
+            return block.get_height(width)
+        # ADD 칸은 단추가 줄을 바꿔야 키가 정해진다. 한 번 놓아 보고 잰다.
+        block.layout(gc, wx.Rect(MARGIN, 0, width, block.height))
+        return block.rect.height
+
+    def set_wide(self, wide):
+        if wide != self.wide:
+            self.wide = wide
+            self.Refresh()
+
     def layout(self, gc, width):
-        y = self.top_gap
+        '''문서의 단처럼. 첫 단을 위에서 아래로 채우고 다음 단으로 넘어간다. 차례는 신호
+        흐름 그대로, 끊는 자리는 단 높이가 가장 고르게 되는 곳. 계기판은 단 밖(위·아래)에 폭 전체.'''
+        self.columns = self.get_column_count(width)
+        blocks = self.get_blocks()
+        count = min(self.columns, len(blocks))
         inner = width - MARGIN * 2
-        for block in self.get_blocks():
-            height = block.get_height(inner) if hasattr(block, 'get_height') else block.height
-            block.layout(gc, wx.Rect(MARGIN, y, inner, height))
-            y += block.rect.height + GAP
+        starts = [0]
+        while count > 1:
+            base = (inner - GAP * (count - 1)) // count
+            starts = split_columns([self.measure(gc, block, base) for block in blocks], count)
+            # 키 큰 판 하나가 단 높이를 정하면 뒤 단이 비어 남는다. 빈 단은 두지 않고 단 수를 줄여 판을 넓힌다.
+            used = len(set(starts) - {len(blocks)})
+            if used == count:
+                break
+            count = used
+        if count == 1:
+            starts = [0]
+        # 단 폭은 정수 px. 남는 화소는 앞 단부터 하나씩 — 오른쪽 끝이 창 여백과 맞는다.
+        base, extra = divmod(inner - GAP * (count - 1), count)
+        widths = [base + (1 if index < extra else 0) for index in range(count)]
+        bottom = self.top_gap
+        x = MARGIN
+        for column, span in enumerate(widths):
+            end = starts[column + 1] if column + 1 < count else len(blocks)
+            y = self.top_gap
+            for block in blocks[starts[column]:end]:
+                height = block.get_height(span) if hasattr(block, 'get_height') else block.height
+                block.layout(gc, wx.Rect(x, y, span, height))
+                y += block.rect.height + GAP
+            bottom = max(bottom, y)
+            x += span + GAP
+        y = bottom
         # 아래 Analyzer 판과는 장치 사이와 같은 간격만 둔다. 레일만 보이는 틈을 남기지 않는다.
         self.meters_y = y
         # 맨 아래 여백은 좌우와 같은 MARGIN 하나. 마지막 판 뒤의 GAP 까지 더하면 3 화소 넓었다(사용자).
@@ -536,8 +641,10 @@ class RackView(Canvas):
         self.layout(gc, rack_width)
         self.clamp()
         # 굴렀거나 장치가 늘고 줄어 아래 Analyzer 자리가 바뀌면 판을 옮기게 알린다.
-        if self.on_scroll is not None and self.notified != (self.offset, self.meters_y):
-            self.notified = (self.offset, self.meters_y)
+        rect = self.analyzer_slot.rect if self.columns > 1 else None
+        key = (self.offset, self.meters_y, rect and tuple(rect))
+        if self.on_scroll is not None and self.notified != key:
+            self.notified = key
             wx.CallAfter(self.on_scroll)
         fill_rect(gc, RACK['bg'], 0, 0, width, height)
         gc.PushState()

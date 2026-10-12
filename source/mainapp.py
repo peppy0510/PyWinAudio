@@ -89,6 +89,7 @@ class MainFrame(wx.Frame):
         self.meters.on_height = self.place_rackpage
         self.meters.on_wheel_rack = self.rack.on_wheel
         self.rack.on_scroll = self.place_meters
+        self.rack.analyzer = self.meters
         self.rackpage.Bind(wx.EVT_SIZE, lambda event: (self.place_rackpage(), event.Skip()))
         self.settingsbox = SettingsBox(self.book, theme, settings, self.on_settings,
                                        self.on_unlink)
@@ -129,9 +130,21 @@ class MainFrame(wx.Frame):
 
     def place_rackpage(self):
         width, height = self.rackpage.GetClientSize()
-        # 핀을 꽂으면 계기판은 랙 위에 고정, 빼면 랙 맨 아래(ADD 다음)에 함께 구른다. 오른쪽
-        # 기둥(2단)은 사용자가 원치 않는다.
+        # 한 단일 때: 핀을 꽂으면 계기판은 랙 위에 고정, 빼면 랙 맨 아래(ADD 다음)에 함께 구른다.
         meters = self.meters
+        # 랙이 여러 단이면 판도 랙의 한 칸이다. 자리는 랙이 정하고, 랙을 그린 뒤 place_meters 가 옮긴다.
+        meters.flowing = self.rack.get_column_count(width) > 1
+        if meters.flowing:
+            meters.left_margin = meters.right_margin = 0
+            self.rack.bottom_space = 0
+            self.rack.top_gap = MARGIN
+            self.rack.SetSize(0, 0, width, height)
+            self.place_meters()
+            self.meters.Raise()
+            self.rack.clamp()
+            self.rack.Refresh()
+            return
+        meters.left_margin = MARGIN
         # 핀을 빼면 판이 랙 위에 겹친다. 오른쪽 여백은 비워 랙 스크롤바가 판 뒤에 숨지 않게.
         meters.right_margin = MARGIN if meters.pinned else 0
         meters_width = width if meters.pinned else max(1, width - MARGIN)
@@ -153,7 +166,18 @@ class MainFrame(wx.Frame):
 
     def place_meters(self):
         '''랙이 굴러가거나 장치 수가 바뀔 때마다 핀을 뺀 판을 랙 맨 아래 자리로 옮긴다.'''
-        if self.meters.pinned or not self.rack:
+        if not self.rack:
+            return
+        if self.meters.flowing:
+            rect = self.rack.analyzer_slot.rect
+            # 랙이 아직 여러 단으로 그려지기 전이면 자리가 없다. 그린 뒤 다시 불린다.
+            if self.rack.columns < 2 or rect.width <= 0:
+                return
+            target = wx.Rect(rect.x, rect.y - self.rack.offset, rect.width, rect.height)
+            if self.meters.GetRect() != target:
+                self.meters.SetSize(target)
+            return
+        if self.meters.pinned:
             return
         y = self.rack.meters_y - self.rack.offset
         if self.meters.GetPosition().y != y:
@@ -291,6 +315,9 @@ class MainFrame(wx.Frame):
             self.SetWindowStyle(style | wx.STAY_ON_TOP)
         else:
             self.SetWindowStyle(style & ~wx.STAY_ON_TOP)
+        if self.rack.wide != self.settingsbox.wide.GetValue():
+            self.rack.set_wide(self.settingsbox.wide.GetValue())
+            self.place_rackpage()
 
         theme_name = 'dark' if self.settingsbox.dark.GetValue() else 'light'
         if theme_name != self.theme_name:
@@ -317,6 +344,7 @@ class MainFrame(wx.Frame):
         settings = {
             'theme': self.theme_name,
             'on_top': self.settingsbox.ontop.GetValue(),
+            'wide_layout': self.settingsbox.wide.GetValue(),
             'page': self.get_page_key(),
             'rect': self.stored_rect,
             'power': self.rack.power,
