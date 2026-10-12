@@ -382,6 +382,9 @@ class MainFrame(wx.Frame):
             self.writer.Stop()
         self.meters.close()
         self.rack.close()
+        # A/B 비교 중에 닫아도 엔진이 원래 소리로 남지 않게 푼다.
+        from automastermeter import READER
+        READER.set_bypass(False)
         # 마우스를 잡은 채로 창이 사라지면 나중에 죽는다. 먼저 놓게 한다.
         self.sidemenu.close()
         if self.restore_bounds is not None:

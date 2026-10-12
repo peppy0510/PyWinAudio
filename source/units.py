@@ -1295,6 +1295,17 @@ class AutoMasterUnit(VstUnit):
 
     loaded_names = None
 
+    def is_bypassed(self):
+        from automastermeter import READER
+        return READER.get_bypass()
+
+    def toggle_bypass(self):
+        from automastermeter import READER
+        if not READER.set_bypass(not READER.get_bypass()):
+            self.show_notice('Play something first: the engine has not started Auto Master yet')
+        if self.rack:
+            self.rack.Refresh()
+
     def rename_params(self, data):
         self.loaded_names = [item[0] for item in data.get('params') or []]
         params, renamed = [], False
@@ -1324,7 +1335,11 @@ class AutoMasterUnit(VstUnit):
         self.controls_button = Chip('Controls', lambda: self.toggle_part('show_controls'),
                                     lambda: self.data.get('show_controls', True),
                                     tip='Show or hide the detailed settings')
-        self.chips = [self.meters_button, self.controls_button]
+        # A/B: 누르는 동안의 원래 소리를 같은 크기로 들려준다. 엔진 설정 줄을 건드리지 않아 곧장 바뀌고,
+        # 적응은 그대로 돈다(사용자: 켜면 서서히 적용돼 비교가 어려웠다). 저장하지 않는다.
+        self.bypass_button = Chip('Bypass', self.toggle_bypass, self.is_bypassed,
+                                  tip='Compare with the original at the same loudness (A/B)')
+        self.chips = [self.meters_button, self.controls_button, self.bypass_button]
         self.extras = []
         self.subtitle_left = None
 

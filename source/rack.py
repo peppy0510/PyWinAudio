@@ -320,6 +320,9 @@ class RackView(Canvas):
         self.analyzer = None
         self.analyzer_slot = AnalyzerSlot(self)
         self.columns = 1
+        # 앞서 A/B 비교 중에 앱이 죽었으면 엔진이 원래 소리로 남아 있다. 켤 때 푼다.
+        from automastermeter import READER
+        READER.set_bypass(False)
         # Leveler 시절 칸은 Auto Master 로 옮기고, 엔진 설정 줄도 새 DLL 로 곧장 다시 쓰게 한다.
         if [data for data in chain if migrate_automaster(data)]:
             wx.CallAfter(lambda: self and self.on_unit_change())

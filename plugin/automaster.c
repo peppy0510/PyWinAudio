@@ -255,8 +255,8 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define METER_MAGIC 0x4D415750 /* 'PWAM' */
 /* 칸 배치가 바뀌면 이름도 바꾼다 — 옛 DLL 이 아직 도는 엔진이 같은 이름에 짧은 칸으로 만들어 둔
  * 공유 메모리에 새 배치로 쓰면 넘친다. */
-#define METER_VERSION 2
-#define METER_NAME L"PyWinAudioAutoMaster.v2"
+#define METER_VERSION 3
+#define METER_NAME L"PyWinAudioAutoMaster.v3"
 #define METER_SLOTS 8
 
 typedef struct {
@@ -277,6 +277,10 @@ typedef struct {
 typedef struct {
     uint32_t magic;
     uint32_t version;
+    /* 랙이 쓰는 칸: 0 이 아니면 A/B 비교 중 — 원래 소리를 같은 크기·같은 늦음으로 내보낸다. 설정 줄을
+     * 바꾸면 엔진이 플러그인을 새로 만들어 적응이 처음부터 다시 쌓이므로, 비교는 여기로만 오간다. */
+    volatile LONG bypass;
+    uint32_t reserved;
     MeterSlot slots[METER_SLOTS];
 } MeterBlock;
 
@@ -396,6 +400,8 @@ typedef struct {
 
     int lookahead;         /* 리미터가 내다보는 표본 수 */
     float delay[2][MAX_LOOKAHEAD];
+    float raw_delay[2][MAX_LOOKAHEAD];  /* A/B 의 원래 소리(AGC 이득만 곱해 크기를 맞춘 것) */
+    double bypass_mix;                  /* 0 = 처리한 소리, 1 = 원래 소리 */
     float wanted[MAX_LOOKAHEAD];  /* 표본마다 필요한 이득 */
     float held[MAX_LOOKAHEAD];    /* 창 최솟값(풀림 적용 뒤) */
     int head;
@@ -700,6 +706,8 @@ static void reset(AutoMaster *self)
     self->fade = 1.0;
     self->fill_coef = 1.0 - exp(-1.0 / (self->rate * FILL_METER_TIME));
     memset(self->delay, 0, sizeof(self->delay));
+    memset(self->raw_delay, 0, sizeof(self->raw_delay));
+    self->bypass_mix = 0.0;
     for (int index = 0; index < MAX_LOOKAHEAD; index++) {
         self->wanted[index] = 1.0f;
         self->held[index] = 1.0f;
@@ -743,6 +751,9 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     int any_sound = 0;
 
     int phase_fix = is_on(self->params[P_PHASE_FIX]);
+    /* A/B: 비교 중이어도 처리와 적응은 그대로 돌린다 — 되돌리는 순간 바로 처리한 소리가 나온다. */
+    double bypass = (meter_block != NULL && meter_block->bypass) ? 1.0 : 0.0;
+    double raw_gain = 1.0;
     for (int32_t n = 0; n < frames; n++) {
         /* 위상 바로잡기: 판정은 들어온 그대로의 소리로, 바로잡은 소리는 그 뒤 모든 단계가 쓴다. */
         double in_l = inputs[0][n], in_r = inputs[1][n];
@@ -818,6 +829,7 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             self->gain_db += (0.0 - self->gain_db) * down;
         }
         double gain = pow(10.0, self->gain_db / 20.0);
+        raw_gain = gain;  /* A/B 의 원래 소리도 같은 크기로 — 큰 쪽이 좋게 들리지 않게 */
         left *= gain;
         right *= gain;
 
@@ -971,12 +983,18 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         int tail = (head + 1) % lookahead;
         float out_left = self->delay[0][tail];
         float out_right = self->delay[1][tail];
+        float raw_left = self->raw_delay[0][tail];
+        float raw_right = self->raw_delay[1][tail];
         self->delay[0][head] = (float)left;
         self->delay[1][head] = (float)right;
+        self->raw_delay[0][head] = (float)(inputs[0][n] * raw_gain);
+        self->raw_delay[1][head] = (float)(inputs[1][n] * raw_gain);
         self->head = tail;
         if (lookahead == 1) {
             out_left = (float)left;
             out_right = (float)right;
+            raw_left = (float)(inputs[0][n] * raw_gain);
+            raw_right = (float)(inputs[1][n] * raw_gain);
         }
         out_left *= (float)smooth;
         out_right *= (float)smooth;
@@ -986,6 +1004,16 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
             if (out_left < -ceiling) out_left = (float)-ceiling;
             if (out_right > ceiling) out_right = (float)ceiling;
             if (out_right < -ceiling) out_right = (float)-ceiling;
+        }
+        if (self->bypass_mix != bypass) {
+            self->bypass_mix += bypass > self->bypass_mix ? self->fade_step : -self->fade_step;
+            if (fabs(self->bypass_mix - bypass) < self->fade_step)
+                self->bypass_mix = bypass;
+        }
+        if (self->bypass_mix > 0.0) {
+            double b = self->bypass_mix;
+            out_left = (float)(out_left + (raw_left - out_left) * b);
+            out_right = (float)(out_right + (raw_right - out_right) * b);
         }
         outputs[0][n] = out_left;
         outputs[1][n] = out_right;

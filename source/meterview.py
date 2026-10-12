@@ -907,8 +907,9 @@ class MeterView(wx.Panel):
         if 'oscilloscope' not in self.regions:
             return
         inner = self.get_wave_inner(self.regions['oscilloscope'])
-        if self.wave is None or self.wave.shape[1] != inner.width:
+        if self.wave is None or inner.width <= 3:
             return
+        self.fit_wave(inner.width)
         # 열마다 GDI 금을 그으면 3 ms 가 든다. 열마다 칠한 그림 한 장을 붙인다.
         height = inner.height
         middle = height / 2
@@ -930,11 +931,44 @@ class MeterView(wx.Panel):
                                 list(wx.Colour(TRACE_BLUE).Get()[:3]) + [255])
         return self.wave_colour
 
+    def fit_gram(self, height, width):
+        '''창 크기가 바뀌어도 지난 기록을 버리지 않는다(사용자) — 가장 최근 쪽부터 오른쪽에 옮겨 담고,
+        키가 달라졌으면 줄을 가까운 것으로 다시 고른다. 그릴 때도 부른다 — 다음 장까지 기다려
+        크기가 다른 장을 건너뛰면 그 칸이 한 장씩 비어 깜빡였다(사용자).'''
+        if self.gram is not None and self.gram.shape[:2] == (height, width):
+            return
+        colours = self.get_gram_colours()
+        fresh = numpy.empty((height, width, 3), dtype='uint8')
+        fresh[:] = colours[0]
+        old = self.gram
+        if old is not None and old.size:
+            rows = numpy.minimum((numpy.arange(height) * old.shape[0]) // height, old.shape[0] - 1)
+            keep = min(width, old.shape[1])
+            fresh[:, width - keep:] = old[rows][:, old.shape[1] - keep:]
+            self.gram_dark = 0 if keep else width
+        else:
+            self.gram_dark = width
+        self.gram = fresh
+
+    def fit_wave(self, width):
+        '''스펙트로그램과 같게 — 크기가 바뀌어도 최근 기록을 오른쪽에 옮겨 담는다.'''
+        if self.wave is not None and self.wave.shape[1] == width:
+            return
+        fresh = numpy.zeros((3, width))
+        if self.wave is not None:
+            keep = min(width, self.wave.shape[1])
+            fresh[:, width - keep:] = self.wave[:, self.wave.shape[1] - keep:]
+            self.wave_dark = 0
+        else:
+            self.wave_dark = width
+        self.wave = fresh
+
     def draw_gram(self, dc):
         if 'spectrogram' not in self.regions:
             return
         inner = self.get_spectrum_inner(self.regions['spectrogram'])
-        if self.gram is not None and self.gram.shape[:2] == (inner.height, inner.width):
+        if self.gram is not None and inner.width > 3 and inner.height > 3:
+            self.fit_gram(inner.height, inner.width)
             height, width = self.gram.shape[:2]
             dc.DrawBitmap(wx.Bitmap.FromBuffer(width, height, self.gram.tobytes()), inner.x, inner.y)
         self.draw_gram_labels(dc, inner)
@@ -1284,16 +1318,7 @@ class MeterView(wx.Panel):
         width = self.get_wave_inner(self.regions['oscilloscope']).width
         if width < 4:
             return
-        if self.wave is None or self.wave.shape[1] != width:
-            # 스펙트로그램과 같게 — 크기가 바뀌어도 최근 기록을 오른쪽에 옮겨 담는다.
-            fresh = numpy.zeros((3, width))
-            if self.wave is not None:
-                keep = min(width, self.wave.shape[1])
-                fresh[:, width - keep:] = self.wave[:, self.wave.shape[1] - keep:]
-                self.wave_dark = 0
-            else:
-                self.wave_dark = width
-            self.wave = fresh
+        self.fit_wave(width)
         count = min(len(recent), max(1, int(round(elapsed * RATE))))
         mono = recent[-count:].mean(axis=1)
         column = (float(mono.max()), float(mono.min()), float(numpy.sqrt((mono ** 2).mean())))
@@ -1323,20 +1348,7 @@ class MeterView(wx.Panel):
         if height < 4 or width < 4:
             return
         colours = self.get_gram_colours()
-        if self.gram is None or self.gram.shape[:2] != (height, width):
-            # 창 크기가 바뀌어도 지난 기록을 버리지 않는다(사용자) — 가장 최근 쪽부터 오른쪽에 옮겨 담고,
-            # 키가 달라졌으면 줄을 가까운 것으로 다시 고른다.
-            fresh = numpy.empty((height, width, 3), dtype='uint8')
-            fresh[:] = colours[0]
-            old = self.gram
-            if old is not None and old.size:
-                rows = numpy.minimum((numpy.arange(height) * old.shape[0]) // height, old.shape[0] - 1)
-                keep = min(width, old.shape[1])
-                fresh[:, width - keep:] = old[rows][:, old.shape[1] - keep:]
-                self.gram_dark = 0 if keep else width
-            else:
-                self.gram_dark = width
-            self.gram = fresh
+        self.fit_gram(height, width)
         if self.gram_rows is None or self.gram_rows[0] != height:
             # 줄마다 주파수 칸(위가 높은 소리). 분석기처럼 칸 평균, 좁은 저역은 이어 읽기.
             freqs = numpy.fft.rfftfreq(FFT_SIZE, 1.0 / RATE)
