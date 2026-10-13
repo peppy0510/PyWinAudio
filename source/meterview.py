@@ -47,6 +47,7 @@ from units import FOLDED
 from units import PAD
 from units import TIGHT_PAD
 from units import TIGHT_TOP
+from utilities import call_painted
 
 
 # reads as continuous, and a quarter less CPU than 40
@@ -220,7 +221,7 @@ class Pacer(threading.Thread):
                             view.analyze()
                 self.pending = True
                 try:
-                    wx.CallAfter(view.tick)
+                    call_painted(view, view.tick)
                 except Exception:
                     return
 
@@ -637,6 +638,9 @@ class MeterView(wx.Panel):
     def build_lit(self, background, regions):
         # every segment lit over the ground; a frame copies the spans it needs
         body = regions['level']
+        # the first paint comes before layout, on a 20x20 window
+        if body.width <= 0 or body.height <= 0 or not wx.Rect(background.GetSize()).Contains(body):
+            return None
         sources = []
         for index, phase in ((2, METER_BLUE), (3, METER_MID)):
             dc = wx.MemoryDC(background.GetSubBitmap(body))
@@ -866,7 +870,7 @@ class MeterView(wx.Panel):
             self.background = self.build_background(width, height)
             self.background_key = key
         dc.DrawBitmap(self.background, 0, 0)
-        if not self.regions:
+        if not self.regions or 'level' in self.regions and self.lit is None:
             return
         if not self.is_running():
             if 'spectrum' in self.regions:
@@ -1482,7 +1486,13 @@ class MeterView(wx.Panel):
         if x == self.hover:
             return
         self.hover = x
-        if 'spectrum' in self.regions:
+        if 'spectrum' not in self.regions:
+            return
+        # while analyzing, the next frame draws it; painting per mouse move doubles the cost
+        if self.wanted:
+            with self.lock:
+                self.dirty = True
+        else:
             self.RefreshRect(self.regions['spectrum'], False)
 
     def on_motion(self, event):

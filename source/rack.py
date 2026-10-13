@@ -40,6 +40,7 @@ from units import migrate_automaster
 from units import make_unit
 from mixunit import MixerUnit
 from utilities import Canvas
+from utilities import call_painted
 
 
 MARGIN = 8
@@ -274,7 +275,7 @@ class Pacer(threading.Thread):
             if not self.pending:
                 self.pending = True
                 try:
-                    wx.CallAfter(self.view.tick)
+                    call_painted(self.view, self.view.tick)
                 except Exception:
                     return
 
