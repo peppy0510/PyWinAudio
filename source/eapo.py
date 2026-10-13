@@ -4,15 +4,10 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-Equalizer APO 와 주고받는 것은 config 폴더의 글 파일뿐이다. 엔진은 그 폴더를
-지켜보다가 파일이 바뀌면 스스로 다시 읽는다 — 앱 쪽에서 엔진을 부를 일은 없다.
-
-config.txt 에는 `Include: pywinaudio.txt` 한 줄만 두고, 랙이 만든 내용은 모두
-pywinaudio.txt 에 쓴다. 이어 붙이기 전의 config.txt 는 옆에 그대로 남겨 둔다.
 '''
 
 
+import asyncio
 import os
 import re
 import shlex
@@ -24,7 +19,7 @@ OWN_FILE = 'pywinaudio.txt'
 BACKUP_FILE = 'config-before-pywinaudio.txt'
 INCLUDE_LINE = 'Include: %s' % OWN_FILE
 
-# 시험할 때 진짜 config 를 건드리지 않게 폴더를 바꿔 끼운다.
+# tests swap in a scratch config folder
 OVERRIDE = 'PYWINAUDIO_CONFIG'
 
 HEADER = '# Written by PyWinAudio. Changes made here are overwritten by the app.'
@@ -59,8 +54,7 @@ def get_device_selector():
 
 
 def read_text(path):
-    '''엔진은 BOM 이 없으면 시스템 코드페이지로도 읽는다. 우리는 UTF-8 을 먼저 보고
-    안 되면 mbcs 로 물러선다 — 손으로 쓴 옛 config 가 그런 경우가 있다.'''
+    # the engine reads BOM-less files in the system code page too; try UTF-8, then mbcs
     with open(path, 'rb') as file:
         raw = file.read()
     text = None
@@ -72,18 +66,18 @@ def read_text(path):
             continue
     if text is None:
         text = raw.decode('utf-8', 'replace')
-    # 쓸 때 줄끝을 CRLF 로 바꾸므로 읽을 때 LF 로 모아 두어야 CR 이 겹치지 않는다.
+    # written as CRLF, so fold to LF on read
     return text.replace('\r\n', '\n')
 
 
-# 엔진이 파일을 읽는 동안에는 바꿔 끼우기가 Access denied 로 거부된다(읽기 한 번에
-# 1~3 ms). 그 틈만 비키면 되므로 짧게 몇 번 다시 해 본다.
+# the engine holds the file 1-3 ms per read and the swap is refused meanwhile
 REPLACE_TRIES = 8
 REPLACE_WAIT = 0.015
+RETRY_DELAY = 0.25
 
 
 def write_text(path, text):
-    '''다 쓴 뒤에 바꿔 끼운다. 엔진이 반쯤 쓴 파일을 읽어 가는 일을 막는다.'''
+    # swap in a finished file so the engine never reads half of one
     temporary = path + '.tmp'
     with open(temporary, 'w', encoding='utf-8', newline='\r\n') as file:
         file.write(text)
@@ -97,13 +91,31 @@ def write_text(path, text):
             time.sleep(REPLACE_WAIT)
 
 
+async def write_later(path, text):
+    # retry a refused write, or the engine keeps the old sound; waits run on the asyncio
+    # thread and end early when a newer text cancels this one
+    while True:
+        try:
+            temporary = path + '.tmp'
+            with open(temporary, 'w', encoding='utf-8', newline='\r\n') as file:
+                file.write(text)
+            for attempt in range(REPLACE_TRIES):
+                try:
+                    os.replace(temporary, path)
+                    return
+                except PermissionError:
+                    await asyncio.sleep(REPLACE_WAIT)
+        except OSError:
+            pass
+        await asyncio.sleep(RETRY_DELAY)
+
+
 def is_include(line):
     match = re.match(r'\s*Include\s*:\s*(.+?)\s*$', line, re.IGNORECASE)
     return bool(match) and match.group(1).strip('"').lower() == OWN_FILE
 
 
 def get_state(folder=None):
-    '''('missing' | 'unlinked' | 'linked', config 폴더).'''
     folder = folder or get_config_path()
     if not folder:
         return 'missing', None
@@ -121,8 +133,6 @@ def get_state(folder=None):
 
 
 def link(folder):
-    '''config.txt 를 옆으로 옮겨 두고 Include 한 줄짜리로 바꾼다. 옮긴 내용 가운데 랙이
-    읽을 수 있는 것은 단위로 바꿔 돌려준다 — 이어 붙인 순간 소리가 바뀌지 않게.'''
     path = os.path.join(folder, 'config.txt')
     text = read_text(path) if os.path.exists(path) else ''
     lines = [line for line in text.splitlines() if not is_include(line)]
@@ -130,8 +140,7 @@ def link(folder):
     if lines and not os.path.exists(backup):
         write_text(backup, '\n'.join(lines) + '\n')
     units = parse('\n'.join(lines))
-    # 랙 파일을 먼저 둔다. config.txt 가 먼저 바뀌면 엔진이 아직 없는 파일을 찾다가
-    # 그 사이 소리가 아무것도 안 걸린 채로 지나간다(실측: 'cannot find the file').
+    # rack file first, or the engine looks for a missing file meanwhile (measured)
     write_rack(folder, units)
     write_text(path, '\n'.join([
         '# PyWinAudio writes the rack into %s.' % OWN_FILE,
@@ -141,7 +150,6 @@ def link(folder):
 
 
 def unlink(folder):
-    '''옮겨 둔 config 를 되돌린다. 없으면 Include 줄만 걷어낸다.'''
     path = os.path.join(folder, 'config.txt')
     backup = os.path.join(folder, BACKUP_FILE)
     if os.path.exists(backup):
@@ -156,10 +164,8 @@ def write_rack(folder, units, power=True):
     write_text(os.path.join(folder, OWN_FILE), render(units, power))
 
 
-# ---------------------------------------------------------------- 단위 ↔ 글
-
 FILTER_TYPES = ('PK', 'LSC', 'HSC', 'HPQ', 'LPQ')
-# 옛 이름은 받아들이되 같은 모양의 Q 를 가진 이름으로 옮긴다.
+# old names map to the ones with the same Q shape
 FILTER_ALIASES = {'PEQ': 'PK', 'LS': 'LSC', 'HS': 'HSC', 'HP': 'HPQ', 'LP': 'LPQ'}
 
 GRAPHIC_FREQUENCIES = (25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000,
@@ -185,7 +191,7 @@ def render_band(band):
 
 
 def get_stereo_matrix(unit):
-    '''가운데·옆 성분으로 폭을 정하고, 균형은 한쪽만 줄여 소리가 커지지 않게 한다.'''
+    # width from mid/side; balance only cuts one side so it never gets louder
     width = unit.get('width', 1.0)
     balance = unit.get('balance', 0.0)
     near, far = (1 + width) / 2, (1 - width) / 2
@@ -318,8 +324,6 @@ def parse_vst(text):
 
 
 def parse(text):
-    '''읽을 수 있는 줄은 단위로, 나머지는 Custom 단위에 차례 그대로 담는다.
-    주석과 빈 줄은 버린다.'''
     units = []
 
     def add_custom(line):

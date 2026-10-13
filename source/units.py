@@ -4,11 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-랙에 꽂는 장치들. 값은 모두 data 사전 하나에 있고 그것이 곧 저장되는 모양이다 —
-장치 객체는 그 사전을 그리고 만지는 손잡이일 뿐이다. 소리는 위에서 아래로 지난다.
-
-키가 작은 장치(2U)는 이름판을 왼쪽에, 큰 장치는 위쪽 띠에 둔다.
 '''
 
 
@@ -51,28 +46,19 @@ from rackui import mix
 from rackui import set_font
 
 
-# 판 안쪽 여백은 PAD 하나다. 보이는 내용(글씨·화면 테두리·손잡이 호)이 판 가장자리와
-# 이름 띠 아래 금에서 위·아래·왼쪽·오른쪽 모두 이만큼 떨어진다(사용자: 상하좌우 일관).
-# EAR + INSET 이 왼쪽 끝 줄이다. 옛 이름을 그대로 두고 합이 PAD 가 되게 맞춘다.
+# EAR + INSET is the left edge; the old names stay, summing to PAD
 PAD = 14
 EAR = 8
 INSET = PAD - EAR
 U = 40
-# 접은 장치의 키. Reason 처럼 이름 띠 한 줄과 켜고 끄기·옮기기만 남는다. 펼친 장치도 맨
-# 위 같은 띠를 쓰고 본체는 BODY_TOP 부터, 아래 BOTTOM 을 남긴다.
 FOLDED = 30
 FOLD = 18
 BODY_TOP = HEADER_BAND + 1 + PAD
 BOTTOM = PAD
-# 믹서와 Analyzer 판은 칸·화면이 촘촘한 판이라 안쪽 여백을 더 작게(사용자).
-# 믹서·Analyzer 판 안쪽 여백. 8 도 넓었다(사용자) → 6.
 TIGHT_PAD = 6
-# Analyzer 의 머리 띠 아래 금에서 화면까지. 금(1 화소)까지 여백으로 읽혀 Analyzer 만 위가 커 보였다(사용자,
-# 믹서는 괜찮다) — 금을 넣어 TIGHT_PAD.
+# the 1 px rule under the header counts as space
 TIGHT_TOP = TIGHT_PAD - 1
-# 손잡이 한 줄의 보이는 키. 손잡이 칸(64)은 글씨 위아래 여유를 품고 있어 보이는 것은 이만큼.
 KNOB_ROW = 62
-# 손잡이 칸 맨 위에서 이름 글씨가 보이기 시작하는 곳까지.
 KNOB_TOP = 4
 
 TITLES = {
@@ -87,11 +73,10 @@ TITLES = {
 }
 
 ADDABLE = ('preamp', 'parametric', 'graphic', 'delay', 'stereo', 'automaster', 'vst')
-# PyWinAudio 의 자체 플러그인. 엔진(audiodg)이 읽을 수 있는 곳에 깔아 둔다(plugin/install.ps1).
+# audiodg (LocalService) must be able to read it
 AUTOMASTER_PATH = r'C:\Program Files\VSTPlugIns\PyWinAudio\PyWinAudioAutoMaster.dll'
 AUTOMASTER_FILE = 'pywinaudioautomaster.dll'
 AUTOMASTER_NAME = 'PyWinAudio Auto Master'
-# Leveler 시절 이름. 저장된 랙에서 만나면 Auto Master 로 옮긴다(파라미터 이름은 그대로라 값도 이어진다).
 OLD_AUTOMASTER_FILE = 'pywinaudioleveler.dll'
 
 BAND_TYPES = (('PK', 'Peak'), ('LSC', 'Low shelf'), ('HSC', 'High shelf'),
@@ -102,7 +87,6 @@ SCREEN_RANGE = 18.0
 GRAPHIC_RANGE = 12.0
 MAX_FADERS = 31
 MAX_BANDS = 20
-# 이 글씨를 보이는 플러그인 파라미터는 손잡이 대신 켜고 끄는 단추로.
 SWITCH_WORDS = ('ON', 'OFF', 'ENABLED', 'DISABLED', 'YES', 'NO')
 
 
@@ -125,7 +109,7 @@ def make_unit(kind):
         return {'kind': kind, 'on': True, 'path': '', 'params': [], 'display': [],
                 'chunk': None}
     if kind == 'automaster':
-        # 엔진에는 보통 VST 줄로 나간다. 랙에서만 기본 장치처럼 보인다.
+        # the engine gets a plain VST line
         return {'kind': 'vst', 'on': True, 'path': AUTOMASTER_PATH, 'params': [], 'display': [],
                 'chunk': None, 'name': AUTOMASTER_NAME, 'vendor': 'PyWinAudio'}
     return {'kind': 'custom', 'on': True, 'lines': []}
@@ -133,7 +117,6 @@ def make_unit(kind):
 
 class Unit:
 
-    # 이름 띠 + 손잡이 한 줄 — 작은 장치의 키.
     height = BODY_TOP + KNOB_ROW + BOTTOM
 
     def __init__(self, data, rack):
@@ -157,7 +140,6 @@ class Unit:
         return bool(self.data.get('folded'))
 
     def toggle_fold(self):
-        '''접는 것은 보기만 바꾼다. 엔진에 가는 글은 그대로라 다시 쓰이지 않는다.'''
         self.data['folded'] = not self.folded
         self.rack.on_unit_change(self)
 
@@ -185,29 +167,23 @@ class Unit:
         return RACK['dim']
 
     def get_header_buttons(self):
-        '''큰 장치의 위쪽 띠 오른쪽에 놓는 글자 단추.'''
         return []
 
     def get_height(self, width):
         return FOLDED if self.folded else self.height
 
     def layout(self, gc, rect):
-        '''이름 띠는 접었을 때와 펼쳤을 때가 같은 자리다. 접기·불·제목·부제·옮기기 단추가
-        모두 띠 가운데 줄에 선다. 펼치면 그 아래에 본체가 붙을 뿐이다.'''
         self.rect = rect
-        # 맨 위 장치는 더 못 올리고, 맨 아래는 더 못 내린다 — 그 단추는 흐리게, 누르지 못하게(사용자).
         units = getattr(self.rack, 'units', [])
         if self in units:
             index = units.index(self)
             self.up.enabled = index > 0
             self.down.enabled = index < len(units) - 1
-        # 오른쪽 단추(옮기기·빼기)는 글리프 끝이 왼쪽 접기 글리프와 같은 거리(실측 14)에 서게 — +2 일 때
-        # 18 대 15 로 오른쪽이 남아 보였다(사용자).
+        # +6 puts the glyph ends 14 px in, like the fold glyph (measured)
         left, right = rect.x + EAR + INSET, rect.x + rect.width - EAR - INSET + 6
         middle = rect.y + FOLDED // 2
         self.fold.glyph = 'right' if self.folded else 'down'
         self.fold.tip = 'Unfold' if self.folded else 'Fold'
-        # 접기 글리프의 좌우 빈 곳을 같게(사용자) — 왼쪽 띠에서 글리프까지 = 글리프에서 불까지 12 화소.
         self.fold.rect = wx.Rect(left - 5, middle - FOLD // 2, FOLD, FOLD)
         self.power.rect = wx.Rect(left + FOLD + 1, middle - 7, 14, 14)
         x = right
@@ -227,7 +203,6 @@ class Unit:
         if self.folded:
             self.body = wx.Rect(left, rect.y, 0, 0)
             return
-        # 띠의 단추들은 제 안에 여백이 있어 2 화소 더 바깥에 선다. 본체는 PAD 그대로.
         body = wx.Rect(left, rect.y + BODY_TOP, rect.x + rect.width - PAD - left,
                        rect.height - BODY_TOP - BOTTOM)
         self.body = body
@@ -239,7 +214,7 @@ class Unit:
     def draw(self, gc):
         rect = self.rect
         draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR, self.accent)
-        left = self.power.rect.x + 21  # 불을 1 화소 옮겨도 제목은 다른 판과 같은 자리
+        left = self.power.rect.x + 21  # one less: the power icon sits 1 px right
         draw_title(gc, left, rect.y, self.get_title(), self.get_subtitle(),
                    self.get_subtitle_tone(), max(0, self.header_right - left))
         if self.folded:
@@ -257,8 +232,7 @@ class Unit:
 
 
 def place_knobs(knobs, area, width=58, gc=None):
-    '''손잡이를 왼쪽부터 같은 폭으로 늘어놓고 끝 x 를 돌려준다. gc 를 주면 첫 손잡이의
-    보이는 왼쪽 끝(호·끝 숫자·이름)이 area 왼쪽에 닿게 칸을 당긴다.'''
+    # with gc, pull the first knob so its visible left edge meets the area
     x = area.x
     if gc is not None and knobs:
         x -= max(0, int(width / 2 - knobs[0].get_reach(gc, width)))
@@ -266,9 +240,6 @@ def place_knobs(knobs, area, width=58, gc=None):
         knob.rect = wx.Rect(x, area.y + (area.height - KNOB_ROW) // 2 - KNOB_TOP, width, KNOB_ROW + KNOB_TOP + 2)
         x += width + 4
     return x
-
-
-# ---------------------------------------------------------------- Preamp
 
 
 class PreampUnit(Unit):
@@ -310,12 +281,7 @@ class PreampUnit(Unit):
         draw_text(gc, hint, x + 72, middle + 1, 7.5, tone)
 
 
-# ---------------------------------------------------------------- Parametric EQ
-
-
 class EqScreen(Control):
-    '''응답 곡선 화면. 점을 끌어 주파수와 이득을 함께 옮기고, 빈 곳을 두 번 누르면
-    그 자리에 Peak 하나를 더한다.'''
 
     cursor = wx.CURSOR_ARROW
     HIT = 9
@@ -468,10 +434,9 @@ class ParametricUnit(Unit):
 
     height = BODY_TOP + 164 + BOTTOM
     PANEL = 236
-    # 이보다 좁으면 화면을 위에, 밴드 조작부를 그 아래에 둔다.
     SIDE_BY_SIDE = 600
     SCREEN_HEIGHT = 136
-    # 손잡이 이름과 호 사이를 넓힌 만큼(3) 더 — 실측 아래 여백 14.
+    # measured: leaves 14 px below
     PANEL_HEIGHT = 138
 
     def build(self):
@@ -573,7 +538,7 @@ class ParametricUnit(Unit):
             top = body.y + self.SCREEN_HEIGHT + 12
         else:
             panel = min(self.PANEL, body.width // 2)
-            # 화면 테두리(1 화소 바깥)가 본체 끝에 닿게.
+            # the screen rim (1 px outside) meets the body edge
             self.screen.rect = wx.Rect(body.x + 1, body.y + 1, body.width - panel - 16,
                                        body.height - 2)
             x = body.x + body.width - panel
@@ -606,9 +571,6 @@ class ParametricUnit(Unit):
         count = len(self.data['bands'])
         text = 'BAND %d / %d' % (self.data.get('selected', 0) + 1, count) if count else 'NO BANDS'
         draw_text(gc, text, x, y, 8, RACK['text'], bold=True, align='center', engraved=True)
-
-
-# ---------------------------------------------------------------- Graphic EQ
 
 
 class GraphicUnit(Unit):
@@ -662,12 +624,10 @@ class GraphicUnit(Unit):
                                          body.y + (body.height - Button.HEIGHT) // 2,
                                          width, Button.HEIGHT)
             return
-        # 막대 칸 위 14 는 끌 때 값이 뜨는 자리라 평소엔 비어 있다. 그만큼 위로 올려 눈금
-        # 맨 위 글씨가 본체 끝에 닿게, 아래 주파수 글씨도 끝에 닿게 늘인다.
+        # the 14 px above each slot is for the drag readout; lift the scale into it
         self.scale = wx.Rect(body.x, body.y, 26, body.height)
         area = wx.Rect(body.x + 30, body.y - 11, body.width - 30, body.height + 13)
         width = area.width / len(self.faders)
-        # 칸이 좁으면 주파수 이름을 건너뛰며 단다. 서로 겹쳐 아무것도 못 읽게 되느니.
         skip = max(1, math.ceil(26 / max(1, width)))
         for index, fader in enumerate(self.faders):
             fader.rect = wx.Rect(round(area.x + width * index), area.y, round(width),
@@ -702,9 +662,6 @@ class GraphicUnit(Unit):
                       self.body.width - 20, 1)
             draw_text(gc, '%+d' % gain if gain else '0', self.scale.x + 17, y - 6, 7,
                       RACK['dim'], align='right', engraved=True)
-
-
-# ---------------------------------------------------------------- Delay · Stereo
 
 
 class DelayUnit(Unit):
@@ -772,30 +729,19 @@ class StereoUnit(Unit):
                                  width, Button.HEIGHT)
 
 
-# ---------------------------------------------------------------- VST
-
-
 class VstUnit(Unit):
-    '''플러그인은 손을 댈 때에야 이 프로세스에 올린다. 그 전에는 저장해 둔 이름과
-    값으로 그린다 — 앱을 켤 때마다 남의 DLL 을 모두 올릴 까닭이 없다.'''
+    # plugins load on first touch; until then the saved names and values draw
 
-    # 손잡이 칸. 'WIDE AMOUNT' 같은 이름이 잘리지 않을 만큼. 칸이 모자라면 줄을 바꿔 판이
-    # 아래로 길어진다(사용자: 좁은 화면에서 줄바꿈).
     KNOB = 68
     KNOB_GAP = 4
-    # 줄 사이: 12 + 가로 금 1 + 12 (사용자: 여백 좀 더).
     RULE_GAP = 12
     ROW_GAP = RULE_GAP * 2 + 1
-    # Edit·Choose 단추 기둥의 폭. 키를 셀 때(gc 없음)와 놓을 때가 같은 값을 써야 줄 수가 맞는다.
+    # counting rows (no gc) and placing them must agree
     BUTTONS = 76
-    # 플러그인이 알려 준 구역 사이의 틈. 가운데에 세로 금 하나.
     SEPARATOR = 21
-    # PyWinAudio Auto Master 의 보정 계기 줄(이름·값 한 줄 + 막대).
     METER_ROW = 26
     METER_CELL = 112
     METER_GAP = 16
-    # 첫 줄은 단계마다 거는 양, 그 뒤 대역 셋(사용자: 대역별 처리가 한눈에). 대역 칸은 넓이(S/M dB) 막대
-    # 하나에 들어온 넓이(옅게)·채워 넓어진 만큼(밝게)·목표(눈금)를 겹친다. 위상은 맞춘 시간(± ms)과 극성.
     METERS = (('agc', 'AGC', -12.0, 18.0, True), ('balance', 'BALANCE', -6.0, 6.0, True),
               ('side', 'WIDTH CUT', -6.0, 0.0, False), ('phase', 'PHASE', -2.0, 2.0, True),
               ('limiter', 'LIMITER', -12.0, 0.0, False), ('band0', 'LOW 150–600', -30.0, 0.0, False),
@@ -822,8 +768,7 @@ class VstUnit(Unit):
             self.rack.Refresh()
 
     def build(self):
-        '''이름이 바뀌면 손잡이를 다시 만든다. 올려 둔 플러그인과 편집기는 그대로 둔다.'''
-        # 예전에는 이 알림을 잘못으로 저장해 두어 사라지지 않았다. 남아 있으면 걷는다.
+        # older builds saved this notice as an error
         if self.data.get('error') == 'This plugin has no editor of its own':
             self.data.pop('error')
             self.data['has_editor'] = False
@@ -857,9 +802,7 @@ class VstUnit(Unit):
         return not self.is_automaster() or self.data.get('show_controls', True)
 
     def is_switch(self, index):
-        '''VST2 의 파라미터는 모두 0~1 실수라 켜고 끄는 값을 따로 알려 주지 않는다. 플러그인이
-        보여 주는 글씨가 ON·OFF 류면 켜고 끄는 단추로 본다.'''
-        # 플러그인이 직접 알려 주면(VstParameterProperties 의 IsSwitch) 그것을 믿는다.
+        # VST2 parameters are 0..1 floats; ON/OFF display text marks a switch
         switches = self.data.get('switches') or []
         if index < len(switches) and switches[index] is not None:
             return bool(switches[index])
@@ -871,9 +814,7 @@ class VstUnit(Unit):
         return name.upper()
 
     def get_default(self, index):
-        '''플러그인이 갓 올라왔을 때의 값. 저장한 값을 되돌리기 전에 읽어 둔다 — 지금 값을 쓰면
-        두 번 눌러도 마지막에 쓴 값으로 돌아갔다(사용자).'''
-        # 저장해 둔 defaults 는 옛 빌드의 것일 수 있다. 플러그인을 올려 지금 빌드에게 묻는다.
+        # defaults come from the freshly loaded plugin, before saved values go in
         self.ensure_plugin()
         defaults = self.data.get('defaults') or []
         if index < len(defaults):
@@ -929,7 +870,6 @@ class VstUnit(Unit):
         return plugin
 
     def apply_state(self):
-        '''저장해 둔 값을 플러그인에 되돌린다. 덩어리가 있으면 그것이 전부다.'''
         plugin = self.plugin
         if self.data.get('chunk') and plugin.uses_chunks:
             plugin.set_chunk(self.data['chunk'])
@@ -968,11 +908,8 @@ class VstUnit(Unit):
         self.data['params'][index][1] = round(value, 6)
         if plugin is not None and index < plugin.count:
             plugin.set_value(index, value)
-            # 플러그인이 값을 거절하거나(LoudMax 는 Fader Link 가 켜지면 Output 이 끝에 닿은 채로
-            # Thresh 를 올리지 못한다) 다른 값을 함께 움직인다. 넣은 값을 믿지 말고 모두 다시
-            # 읽어 손잡이·숫자를 플러그인에 맞춘다.
+            # plugins may refuse a value or move others with it; read everything back
             self.read_state()
-            # 거절당하면 손잡이가 말없이 서 있어 고장처럼 보였다(사용자). 잠깐 까닭을 띄운다.
             if abs(self.data['params'][index][1] - value) > 0.01:
                 self.show_notice('%s: held by the plugin (another setting limits it)' %
                                  self.get_short_name(self.data['params'][index][0]))
@@ -986,7 +923,6 @@ class VstUnit(Unit):
         if plugin is None:
             return
         if not plugin.has_editor:
-            # 잘못이 아니라 알림이다. 잠깐 띄우고 사라진다(사용자). Edit 도 그 뒤로는 흐리게.
             self.data['has_editor'] = False
             self.show_notice('This plugin has no editor of its own')
             self.rack.Refresh()
@@ -1006,7 +942,6 @@ class VstUnit(Unit):
             self.changed()
 
     def pick_path(self):
-        '''고른 플러그인 파일 경로. 그만두면 None.'''
         start = os.path.dirname(self.data.get('path') or '') or self.rack.get_plugin_folder()
         with wx.FileDialog(self.rack, 'Choose a VST2 plugin', defaultDir=start,
                            wildcard='VST2 plugin (*.dll)|*.dll',
@@ -1036,8 +971,7 @@ class VstUnit(Unit):
         self.changed()
 
     def close(self):
-        # 편집기 창보다 플러그인 쪽 편집기를 먼저 닫는다. 담긴 창이 사라진 뒤에
-        # 닫으라고 하면 플러그인이 없는 창을 만지다 죽는다.
+        # close the plugin's editor before its host window, or it touches a dead window
         if self.editor:
             self.editor.timer.Stop()
             if self.plugin is not None:
@@ -1049,8 +983,6 @@ class VstUnit(Unit):
             self.plugin = None
 
     def draw_meters(self, gc):
-        '''단계마다 지금 얼마나 고치고 있는지: 이름, 값, 막대. 양쪽으로 가는 값(AGC·좌우)은
-        0 에서 양쪽으로, 줄이기만 하는 값은 오른쪽 끝(0)에서 왼쪽으로 자란다.'''
         rect = self.meter_rect
         values = self.meter_values
         gap = self.METER_GAP
@@ -1074,7 +1006,7 @@ class VstUnit(Unit):
                 delay = '' if abs(value) < 0.05 else '%+.1f ms' % value
                 text = ('INV ' + delay).strip() if values.get('phase_flip') else (delay or 'OK')
             else:
-                shown = 0.0 if abs(value) < 0.05 else value  # '-0.0' 이 뜨지 않게
+                shown = 0.0 if abs(value) < 0.05 else value  # no '-0.0'
                 text = '%+.1f dB' % shown if bipolar else '%.1f dB' % min(0.0, shown)
             draw_text(gc, text, x + width, top, 7, RACK['text'] if value is not None else
                       RACK['faint'], align='right')
@@ -1090,15 +1022,28 @@ class VstUnit(Unit):
                     left, right = min(at, zero), max(at, zero)
                 if right - left >= 1:
                     fill_rect(gc, self.accent, left, bar.y, right - left, bar.height, 2)
-                    # 가운데 0 에서 자라는 막대는 0 쪽이 시작점이라 각지게 — 둥글면 끝처럼 보인다(사용자).
+                    # bars from zero get a square start; a round one reads as an end
                     if bipolar and right - left > 2:
                         side = left if at >= zero else right - 2
                         fill_rect(gc, self.accent, side, bar.y, 2, bar.height)
             if bipolar:
                 fill_rect(gc, RACK['dim'], zero, bar.y - 2, 1, bar.height + 4)
 
+    def paint_levels(self, dc, offset, box=None):
+        rect = wx.Rect(self.meter_rect).Inflate(2, 2)
+        bitmap = wx.Bitmap(max(1, rect.width), max(1, rect.height))
+        memory = wx.MemoryDC(bitmap)
+        memory.SetBackground(wx.Brush(wx.Colour(RACK['panel'])))
+        memory.Clear()
+        gc = wx.GraphicsContext.Create(memory)
+        gc.SetAntialiasMode(wx.ANTIALIAS_DEFAULT)
+        gc.Translate(-rect.x, -rect.y)
+        self.draw_meters(gc)
+        del gc
+        memory.SelectObject(wx.NullBitmap)
+        dc.DrawBitmap(bitmap, rect.x, rect.y - offset)
+
     def draw_band_meter(self, gc, x, top, width, label, values, band, low, high):
-        '''대역 하나의 넓이: 들어온 만큼 옅게, 채워 넓어진 만큼 밝게, 목표에 눈금. 숫자는 나간 넓이.'''
         draw_text(gc, label, x, top, 7, RACK['dim'], bold=True)
         bar = wx.Rect(int(x), top + 17, int(width), 5)
         fill_rect(gc, RACK['track'], bar.x, bar.y, bar.width, bar.height, 2)
@@ -1119,7 +1064,7 @@ class VstUnit(Unit):
             fill_rect(gc, self.accent, middle, bar.y, end - middle, bar.height, 2)
         fill_rect(gc, RACK['text'], to_x(info['target']), bar.y - 2, 1, bar.height + 4)
 
-    # 랙 손잡이로 둘 까닭이 없는 것 — 편집기 창 크기만 바꾸는 단추(사용자).
+    # resizes the editor window only
     HIDDEN = ('large gui',)
 
     def is_hidden(self, index):
@@ -1127,7 +1072,6 @@ class VstUnit(Unit):
         return index < len(params) and params[index][0].strip().lower() in self.HIDDEN
 
     def get_groups(self):
-        '''이어진 같은 구역 번호끼리 묶은 손잡이 차례들. 구역을 모르면 한 묶음.'''
         groups_of = self.data.get('groups') or []
         groups = []
         for index in range(len(self.knobs)):
@@ -1141,9 +1085,6 @@ class VstUnit(Unit):
         return [indices for category, indices in groups]
 
     def flow(self, body_width):
-        '''손잡이 자리(줄, x)와 구역 금 자리(줄, x), 줄 수. 한 구역은 되도록 한 줄에 함께 두고,
-        남은 자리에 안 들어가면 다음 줄로 넘긴다. 한 줄보다 긴 구역은 그 안에서 줄을 바꾼다.'''
-        # 첫 줄만 오른쪽 Edit·Choose 단추 기둥을 비운다. 둘째 줄부터는 단추 아래까지 다 쓴다(사용자).
         def get_room(row):
             return max(self.KNOB, body_width - (self.BUTTONS + 12 if row == 0 and self.BUTTONS else 0))
         places, separators = {}, []
@@ -1181,7 +1122,6 @@ class VstUnit(Unit):
         return BODY_TOP + sum(parts) + self.ROW_GAP * (len(parts) - 1) + BOTTOM
 
     def get_meter_columns(self, body_width):
-        '''계기 칸이 이름·값이 겹치지 않을 만큼 넓게 — 좁으면 줄을 바꾼다(사용자).'''
         return max(1, min(len(self.METERS), (body_width + self.METER_GAP) //
                           (self.METER_CELL + self.METER_GAP)))
 
@@ -1189,8 +1129,7 @@ class VstUnit(Unit):
         return math.ceil(len(self.METERS) / self.get_meter_columns(body_width))
 
     def update_meters(self, elapsed):
-        '''플러그인이 audiodg 안에서 적은 값을 읽는다. 리미터는 블록마다 들쭉날쭉해 봉우리를
-        잡고 천천히 놓는다. 값이 바뀌었으면 참.'''
+        # the limiter jumps per block: hold its peak and release slowly
         from automastermeter import READER
         values = READER.read()
         old = self.meter_values
@@ -1202,7 +1141,7 @@ class VstUnit(Unit):
 
     def layout_body(self, gc, body):
         width = max(1, self.BUTTONS)
-        # 단추 테두리는 칸 1 화소 바깥까지 보인다. 실측 오른쪽 여백을 PAD 에 맞춘다.
+        # button rims show 1 px outside their cell
         right = body.x + body.width - 1
         middle = body.y + (KNOB_ROW - Button.HEIGHT * 2 - 6) // 2
         self.edit.rect = wx.Rect(right - width, middle, width, Button.HEIGHT)
@@ -1213,14 +1152,12 @@ class VstUnit(Unit):
                                  self.data.get('has_editor', True))
         places, separators, rows = self.flow(body.width)
         self.visible = [knob for index, knob in enumerate(self.knobs) if index in places]
-        # 줄 맨 앞 손잡이들 가운데 가장 넓게 퍼지는 것에 맞춰 모든 줄을 같은 만큼 당긴다 —
-        # 줄마다 따로 당기면 기둥이 어긋난다.
+        # shift every row alike, or the columns misalign
         first = [self.knobs[index] for index, (row, x) in places.items() if x == 0]
         shift = 0
         if first:
             shift = max(0, int(self.KNOB / 2 - max(knob.get_reach(gc, self.KNOB)
                                                     for knob in first)))
-        # Auto Master 는 보정 계기를 맨 위에, 그 아래 금 하나, 그 아래 손잡이들(사용자).
         top = body.y
         self.meter_rect = None
         meter_separator = []
@@ -1231,7 +1168,6 @@ class VstUnit(Unit):
             top = body.y + height + self.ROW_GAP
             meter_separator = [wx.Rect(body.x, top - self.RULE_GAP - 1, body.width, 1)]
         if not self.shows_controls():
-            # 상세 설정을 숨기면 계기 줄만 남는다(사용자). 손잡이는 자리도 받지 않는다.
             for knob in self.knobs:
                 knob.rect = wx.Rect()
             self.separators = []
@@ -1245,10 +1181,8 @@ class VstUnit(Unit):
             knob.rect = wx.Rect(body.x - shift + x, y, self.KNOB, KNOB_ROW + KNOB_TOP + 2)
         self.separators = [wx.Rect(body.x - shift + x, top + row * (KNOB_ROW + self.ROW_GAP) + 4,
                                    1, KNOB_ROW - 8) for row, x in separators]
-        # 줄 사이 가로 금. 손잡이가 놓인 데까지만 — 가장 오른쪽까지 보이는 손잡이의 끝에서 멈춘다(사용자).
         end = max(knob.rect.x + self.KNOB / 2 + knob.get_reach(gc, self.KNOB)
                   for knob in self.visible) if self.visible else body.x
-        # 계기 줄이 있는 판(Auto Master)은 계기 아래 금이 판 끝까지 간다. 줄 사이 금도 거기에 맞춘다(사용자).
         if meter_separator:
             end = body.x + body.width
         self.separators += [wx.Rect(body.x, top + row * (KNOB_ROW + self.ROW_GAP) - self.RULE_GAP - 1,
@@ -1265,11 +1199,7 @@ class VstUnit(Unit):
                       8, RACK['faint'])
 
 
-# ---------------------------------------------------------------- Custom
-
-
 class CustomUnit(Unit):
-    '''랙이 모르는 줄. 가져올 때 만났던 차례 그대로 끼워 둔다.'''
 
     def get_subtitle(self):
         count = len(self.data.get('lines', ()))
@@ -1302,14 +1232,11 @@ UNIT_CLASSES = {
 
 
 class AutoMasterUnit(VstUnit):
-    '''PyWinAudio Auto Master. 속은 VST 장치 그대로지만 PyWinAudio 와 함께 깔리는 것이라 기본 장치처럼
-    다룬다(사용자): 파일을 고르지 않고, 편집기가 없어 Edit·Choose 단추를 두지 않으며 그 자리까지
-    손잡이가 쓴다. 이름과 색도 제 것.'''
 
     BUTTONS = 0
-    # 예전 파라미터 이름 → 지금 이름들. 저장된 값은 새 이름 모두에 옮긴다(Stereo 하나가 둘로 나뉘었다).
+    # old parameter name -> new names; the value carries over to all
     RENAMED = {'Stereo': ('Balance', 'Width Limit')}
-    # 손잡이 → 그것을 켜고 끄는 단추. 단추가 꺼져 있으면 손잡이를 흐리게(사용자: 관계가 안 보였다).
+    # knob -> its switch; the knob draws dimmed while the switch is off
     DEPENDS = {'Target': 'AGC', 'Max Gain': 'AGC', 'Speed': 'AGC', 'Max Width': 'Width Limit',
                'Wide Target': 'Mono Wide', 'Air': 'Mono Wide', 'Ceiling': 'Limiter'}
 
@@ -1317,8 +1244,7 @@ class AutoMasterUnit(VstUnit):
         self.rename_params(data)
         super().__init__(data, rack)
         self.face, self.accent = FACES['automaster']
-        # 제 플러그인이라 가볍다. 켤 때 바로 올려 파라미터 목록을 지금 빌드에 맞춘다 — 늦게 올리면 새로
-        # 생긴 손잡이(Air)가 판에도 엔진 설정 줄에도 없었다. 목록이 바뀌었으면 엔진 줄도 다시 쓴다.
+        # load at once so new parameters reach the plate and the engine line
         if os.path.exists(self.data.get('path') or '') and self.ensure_plugin() is not None:
             if [item[0] for item in self.data['params']] != self.loaded_names:
                 wx.CallAfter(lambda: self.rack and self.rack.on_unit_change(self))
@@ -1357,16 +1283,13 @@ class AutoMasterUnit(VstUnit):
             if switch in names and index < len(self.knobs):
                 at = names.index(switch)
                 self.knobs[index].inactive = lambda at=at: self.data['params'][at][1] < 0.5
-        # Analyzer 의 구역 단추처럼: 계기와 상세 설정을 따로 보이고 숨긴다. 둘 다 끌 수는 없다.
-        # 모양·자리 모두 Analyzer 의 구역 칩과 같게: 제목 바로 뒤의 작은 글씨 칩(사용자).
         self.meters_button = Chip('Meters', lambda: self.toggle_part('show_meters'),
                                   lambda: self.data.get('show_meters', True),
                                   tip='Show or hide the meters')
         self.controls_button = Chip('Controls', lambda: self.toggle_part('show_controls'),
                                     lambda: self.data.get('show_controls', True),
                                     tip='Show or hide the detailed settings')
-        # A/B: 누르는 동안의 원래 소리를 같은 크기로 들려준다. 엔진 설정 줄을 건드리지 않아 곧장 바뀌고,
-        # 적응은 그대로 돈다(사용자: 켜면 서서히 적용돼 비교가 어려웠다). 저장하지 않는다.
+        # bypass goes through shared memory: instant, and never saved
         self.bypass_button = Chip('Bypass', self.toggle_bypass, self.is_bypassed,
                                   tip='Compare with the original at the same loudness (A/B)')
         self.chips = [self.meters_button, self.controls_button, self.bypass_button]
@@ -1374,12 +1297,11 @@ class AutoMasterUnit(VstUnit):
         self.subtitle_left = None
 
     def get_controls(self):
-        # 칩은 접어도 이름 띠에 남아 누를 수 있다(Analyzer 처럼).
         return super().get_controls() + self.chips
 
     def layout(self, gc, rect):
         super().layout(gc, rect)
-        left = self.power.rect.x + 21  # 불을 1 화소 옮겨도 제목은 다른 판과 같은 자리
+        left = self.power.rect.x + 21  # one less: the power icon sits 1 px right
         set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
         x = left + gc.GetTextExtent(self.get_title().upper())[0] + 14
         middle = rect.y + FOLDED // 2
@@ -1390,7 +1312,6 @@ class AutoMasterUnit(VstUnit):
         self.subtitle_left = x - CHIP_GAP + 12
 
     def draw(self, gc):
-        # 제목은 그대로, 부제는 칩 뒤에 쓴다.
         subtitle = self.get_subtitle()
         self.get_subtitle = lambda: ''
         try:
@@ -1433,7 +1354,6 @@ def is_automaster_data(data):
 
 
 def migrate_automaster(data):
-    '''Leveler 시절 칸이면 Auto Master 경로·이름으로 옮기고 참. 엔진 설정 줄도 다시 써야 한다.'''
     if data.get('kind') != 'vst' or os.path.basename(data.get('path') or '').lower() != OLD_AUTOMASTER_FILE:
         return False
     data['path'] = AUTOMASTER_PATH

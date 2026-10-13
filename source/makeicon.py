@@ -4,10 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-Draws assets/icon/icon.ico — one rack knob pointing straight up, its value arc lit
-from the start to the centre. The other PyWin icons are one plain shape in two greys
-on the dark disc; this keeps to that.
 '''
 
 
@@ -21,7 +17,6 @@ DISC = '#2f333a'
 TRACK = '#8b929b'
 CAP = '#e6e9ed'
 
-# 랙 손잡이와 같은 270 도 길. 바늘은 한가운데(12 시)를 가리킨다(사용자).
 START = math.radians(135)
 SWEEP = math.radians(270)
 POINT = math.radians(270)

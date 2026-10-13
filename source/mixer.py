@@ -4,14 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-프로그램별 볼륨. Windows 볼륨 믹서와 같은 오디오 세션 API 를 쓴다 — 여기서 바꾼 값은
-볼륨 믹서에도 그대로 보이고, 저쪽에서 바꾼 값도 다음 읽기에 이쪽으로 온다.
-
-세션은 소리를 한 번이라도 낸 프로그램에만 생긴다. 한 프로그램이 세션을 여럿 만들면
-(브라우저의 탭들) 이름으로 묶어 채널 하나로 다룬다.
-
-COM 객체는 모두 주 스레드(wx 의 STA)에서 만들고 부른다.
 '''
 
 
@@ -34,7 +26,6 @@ shlwapi.SHLoadIndirectString.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wint
 
 
 def resolve_indirect(text):
-    ''''@%SystemRoot%\\System32\\AudioSrv.Dll,-202' 같은 리소스 글을 실제 글로.'''
     if not text or not text.startswith('@'):
         return text
     buffer = ctypes.create_unicode_buffer(512)
@@ -55,8 +46,7 @@ def get_file_description(path):
 
 
 def get_python_app(process):
-    '''파이썬으로 띄운 앱은 모두 pythonw.exe 로 보인다. 실행한 스크립트에서 이름을 찾는다.
-    PyWin 앱은 <프로젝트>/source/main.pyw 짜임이라 프로젝트 폴더 이름이 곧 앱 이름이다.'''
+    # python apps show as pythonw.exe; name them by the script's project folder
     try:
         arguments = process.cmdline()[1:]
         directory = process.cwd()
@@ -79,7 +69,6 @@ def get_python_app(process):
 
 
 class Channel:
-    '''이름이 같은 세션들. 볼륨과 음소거는 묶인 세션 모두에 똑같이 건다.'''
 
     def __init__(self, key, name, icon):
         self.key = key
@@ -116,8 +105,7 @@ class Channel:
                 pass
 
     def get_peak(self):
-        '''소리를 내는(활성) 세션의 피크만 본다. 쉬는 세션의 미터는 마지막 값을 돌려주는
-        일이 있어, 조용한 채널이 가끔 번쩍였다.'''
+        # idle sessions can return a stale peak, so read active ones only
         peak = 0.0
         for session, meter in zip(self.sessions, self.meters):
             try:
@@ -130,7 +118,6 @@ class Channel:
 
 
 class MasterChannel(Channel):
-    '''출력 장치 전체. 끝점 볼륨과 끝점 피크를 쓴다.'''
 
     def __init__(self, name, endpoint, meter):
         super().__init__('master', name, None)
@@ -169,6 +156,7 @@ class MasterChannel(Channel):
             return 0.0
 
 
+# COM objects live on the GUI thread (wx STA); create and call them there only
 class Mixer:
 
     def __init__(self):
@@ -181,12 +169,7 @@ class Mixer:
         self.manager = None
 
     def refresh(self):
-        '''세션 목록을 다시 읽는다. 채널 차례는 처음 나타난 차례를 지킨다 — 소리를 낼 때마다
-        자리가 바뀌면 손이 갈 곳을 잃는다.
-
-        pycaw 의 GetSpeakers 는 부를 때마다 장치 속성을 통째로 읽어 한 번에 40 ms 가 든다
-        (GetAllSessions 도 안에서 한 번 더 부른다). 열거자와 세션 관리자는 쥐고 있다가 기본
-        장치가 바뀔 때만 새로 만든다.'''
+        # pycaw GetSpeakers reads every device property (40 ms); hold the enumerator and manager
         try:
             import comtypes
             from pycaw.constants import CLSID_MMDeviceEnumerator
@@ -234,7 +217,7 @@ class Mixer:
                 session = AudioSession(control.QueryInterface(IAudioSessionControl2))
                 if session.State == STATE_EXPIRED:
                     continue
-                # 계기판의 루프백 받기가 이 프로세스에도 세션을 하나 만든다. 제 볼륨은 뺀다.
+                # the loopback capture makes a session for this process too
                 if session.ProcessId == os.getpid():
                     continue
                 key, name, icon = self.describe(session)
@@ -250,13 +233,14 @@ class Mixer:
                                key=lambda channel: order.get(channel.key, len(order)))
 
     def describe(self, session):
+        # look the pid up first: pycaw's Process builds a psutil.Process on every refresh
+        pid = session.ProcessId
+        if pid in self.names:
+            return self.names[pid]
         process = session.Process
         if process is None:
             name = resolve_indirect(session.DisplayName) or 'System sounds'
             return 'system', name, None
-        pid = process.pid
-        if pid in self.names:
-            return self.names[pid]
         try:
             path = process.exe()
         except Exception:

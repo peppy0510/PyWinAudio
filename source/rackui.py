@@ -4,12 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-랙에 꽂히는 장치들이 함께 쓰는 그림과 조작부. 위젯을 쓰지 않고 랙 캔버스 한 장에
-모두 그린다 — 장치 수십 개가 한 화면에 있어도 창은 하나다.
-
-조작부는 제 자리(rect)만 안다. 누름·끌기·두 번 누름은 랙이 골라 넘겨준다.
-움직임은 넣지 않는다. 값이 바뀌면 그 자리에서 곧장 다시 그린다.
 '''
 
 
@@ -19,7 +13,6 @@ import wx
 from utilities import mix
 
 
-# Native Instruments 식 평평한 숯색 판. 회색은 색을 띠지 않고, 강조는 장치 색 하나뿐이다.
 RACK = {
     'bg': '#111214',
     'panel': '#1d1f23',
@@ -46,8 +39,6 @@ RACK = {
     'warn': '#ff9a3d',
 }
 
-# 장치마다 다른 판 색과 눈금 색. 색은 꾸밈이고 무엇인지는 언제나 이름이 말한다.
-# 저자가 적녹색약이라 초록은 쓰지 않는다 — 파랑과 주황이 갈리는 축이다.
 FACES = {
     'master': ('#1d1f23', '#3d9bff'),
     'preamp': ('#1d1f23', '#c9ccd1'),
@@ -60,12 +51,10 @@ FACES = {
     'custom': ('#1d1f23', '#8b8f96'),
 }
 
-# 모든 판의 이름 띠 높이. 접은 장치는 이 띠만 남는다.
 HEADER_BAND = 30
 TITLE_SIZE = 9
 KNOB_RADIUS = 14
 LABEL_HEIGHT = 11
-# 이름 글씨와 값 호 사이. 5 는 너무 붙어 보였다(사용자).
 LABEL_GAP = 8
 KNOB_SWEEP = math.radians(270)
 KNOB_START = math.radians(135)
@@ -74,10 +63,16 @@ FINE = 10.0
 
 
 FONTS = {}
+GRAPHICS = {}
+EXTENTS = {}
+
+
+def get_key(colour):
+    return colour if isinstance(colour, str) else tuple(wx.Colour(colour).Get(True))
 
 
 def get_font(size, bold=False):
-    '''랙 글씨는 반 포인트 단위로 고른다. wx.Font 생성자는 정수만 받아 FontInfo 로 만든다.'''
+    # wx.Font rejects fractional sizes; FontInfo takes them
     key = (size, bold)
     if key not in FONTS:
         info = wx.FontInfo(size).FaceName('Segoe UI')
@@ -85,24 +80,54 @@ def get_font(size, bold=False):
     return FONTS[key]
 
 
-def get_pen(gc, colour, width):
-    '''wx.Pen 은 정수 굵기만 받는다. 반 칸 굵기는 그래픽 펜으로.'''
-    return gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(colour)).Width(width))
+def get_pen(gc, colour, width, cap=None, join=None):
+    # wx.Pen takes integer widths only
+    key = ('pen', get_key(colour), width, cap, join)
+    pen = GRAPHICS.get(key)
+    if pen is None:
+        info = wx.GraphicsPenInfo(wx.Colour(colour)).Width(width)
+        if cap is not None:
+            info = info.Cap(cap)
+        if join is not None:
+            info = info.Join(join)
+        pen = GRAPHICS[key] = gc.CreatePen(info)
+    return pen
+
+
+def get_brush(gc, colour):
+    key = ('brush', get_key(colour))
+    brush = GRAPHICS.get(key)
+    if brush is None:
+        brush = GRAPHICS[key] = gc.CreateBrush(wx.Brush(wx.Colour(colour)))
+    return brush
 
 
 def set_font(gc, size, colour, bold=False):
-    gc.SetFont(get_font(size, bold), wx.Colour(colour))
+    key = ('font', size, bold, get_key(colour))
+    font = GRAPHICS.get(key)
+    if font is None:
+        font = GRAPHICS[key] = gc.CreateFont(get_font(size, bold), wx.Colour(colour))
+    gc.SetFont(font)
+
+
+def get_text_extent(gc, text, size, bold):
+    key = (text, size, bold)
+    extent = EXTENTS.get(key)
+    if extent is None:
+        if len(EXTENTS) > 4096:
+            EXTENTS.clear()
+        extent = EXTENTS[key] = gc.GetTextExtent(text)[:2]
+    return extent
 
 
 def draw_text(gc, text, x, y, size, colour, bold=False, align='left', engraved=False):
-    '''판에 새긴 글씨는 아래로 한 칸 검은 그림자를 깐다.'''
     set_font(gc, size, colour, bold)
-    width, height = gc.GetTextExtent(text)[:2]
+    width, height = get_text_extent(gc, text, size, bold)
     if align == 'center':
         x -= width / 2
     elif align == 'right':
         x -= width
-    # 판이 평평하니 새긴 글씨의 그림자도 없다. engraved 는 옛 부름을 받아 주기만 한다.
+    # engraved is accepted for old callers and ignored
     gc.DrawText(text, x, y)
     return width, height
 
@@ -120,8 +145,6 @@ LABEL_SMALL = 6.5
 
 
 def fit_label(gc, text, limit):
-    '''손잡이 이름: 7.5 로 안 들어가면 6.5 로 줄여 보고, 그래도 넘치면 그때 자른다.
-    'WIDE AMOUNT', 'ISP DETECTION' 이 잘려 읽히지 않았다(사용자).'''
     for size in (LABEL_SIZE, LABEL_SMALL):
         set_font(gc, size, RACK['dim'])
         if gc.GetTextExtent(text)[0] <= limit:
@@ -131,7 +154,7 @@ def fit_label(gc, text, limit):
 
 def fill_rect(gc, colour, x, y, width, height, radius=0):
     gc.SetPen(wx.TRANSPARENT_PEN)
-    gc.SetBrush(wx.Brush(wx.Colour(colour)))
+    gc.SetBrush(get_brush(gc, colour))
     if radius:
         gc.DrawRoundedRectangle(x, y, width, height, radius)
     else:
@@ -139,13 +162,10 @@ def fill_rect(gc, colour, x, y, width, height, radius=0):
 
 
 def draw_rails(gc, x, y, width, height, ear):
-    '''레일은 없다(NI 식 평평한 랙). 판 뒤 바닥만 칠한다.'''
     fill_rect(gc, RACK['bg'], x, y, width, height)
 
 
 def draw_faceplate(gc, x, y, width, height, face, ear, accent=None):
-    '''장치 판. 평평한 숯색 본체 위에 한 톤 어두운 이름 띠, 띠 아래 1 px 선. 장치 색은 띠
-    왼쪽 끝의 가는 줄에만 쓴다. 띠는 판 키와 상관없이 같아 접어도 그대로 보인다.'''
     fill_rect(gc, RACK['panel'], x, y, width, height, 3)
     band = min(height, HEADER_BAND)
     fill_rect(gc, RACK['band'], x, y, width, band, 3)
@@ -157,11 +177,9 @@ def draw_faceplate(gc, x, y, width, height, face, ear, accent=None):
 
 
 def draw_title(gc, left, y, title, subtitle, tone, limit):
-    '''이름 띠의 제목과 부제. 모든 판이 같은 크기·같은 자리에 쓴다 — 접어도 그대로다.'''
     middle = y + HEADER_BAND / 2
     set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
     title = fit_text(gc, title.upper(), limit)
-    # 제목은 굵게, 부제는 흐리게 — NI 처럼 대문자 제목 한 줄.
     width = draw_text(gc, title, left, middle - 8, TITLE_SIZE, RACK['text'], bold=True,
                       engraved=True)[0]
     if subtitle:
@@ -171,7 +189,6 @@ def draw_title(gc, left, y, title, subtitle, tone, limit):
     return width
 
 
-# 이름 띠의 구역 토글 칩(Analyzer 의 METERS·SPECTRUM, Auto Master 의 METERS·CONTROLS). 모양은 여기 하나.
 CHIP_HEIGHT = 16
 CHIP_PAD = 6
 CHIP_GAP = 4
@@ -185,8 +202,6 @@ def get_chip_width(gc, text):
 
 
 def get_fill(lit, hovered, pressed, accent):
-    '''누를 수 있는 것의 바탕 한 규칙(사용자: 어떤 단추는 반응하고 어떤 건 안 했다). 꺼진 것은
-    올리면 한 단계 밝게·누르면 어둡게, 켜진 것은 제 색을 올리면 조금 밝게·누르면 조금 어둡게.'''
     if lit:
         if pressed:
             return mix(accent, '#000000', 0.15)
@@ -201,8 +216,6 @@ def get_fill(lit, hovered, pressed, accent):
 
 
 def draw_chip(gc, rect, text, lit, hovered=False):
-    '''평평한 글씨 칩. 켜져 있으면 CHIP_LIT, 꺼져 있으면 테두리만. 판 색을 따르지 않는다 —
-    Analyzer·Auto Master 칩 색이 달라 보였다(사용자). 누르는 순간 바뀌므로 눌림 표시는 없다.'''
     fill = get_fill(lit, hovered, False, CHIP_LIT)
     gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
     gc.SetBrush(wx.Brush(fill))
@@ -212,9 +225,8 @@ def draw_chip(gc, rect, text, lit, hovered=False):
 
 
 def draw_led(gc, cx, cy, on, colour, radius=5.5, off=None):
-    '''켜고 끄기. LED 대신 전원 기호 — 켜지면 장치 색, 꺼지면 흐린 회색(off 로 바꿀 수 있다).'''
     tone = colour if on else (off or RACK['led_off'])
-    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(tone)).Width(1.6).Cap(wx.CAP_ROUND)))
+    gc.SetPen(get_pen(gc, tone, 1.6, cap=wx.CAP_ROUND))
     gc.SetBrush(wx.TRANSPARENT_BRUSH)
     arc = gc.CreatePath()
     arc.AddArc(cx, cy + 0.5, radius, math.radians(-60), math.radians(240), True)
@@ -223,7 +235,6 @@ def draw_led(gc, cx, cy, on, colour, radius=5.5, off=None):
 
 
 def draw_lcd(gc, rect):
-    '''화면. 평평한 검은 판에 1 px 테두리.'''
     fill_rect(gc, RACK['lcd_rim'], rect.x - 1, rect.y - 1, rect.width + 2, rect.height + 2, 3)
     fill_rect(gc, RACK['lcd'], rect.x, rect.y, rect.width, rect.height, 2)
 
@@ -237,8 +248,7 @@ def get_arc(gc, cx, cy, radius, start, end):
 
 
 def draw_glyph(gc, name, cx, cy, size, colour):
-    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(colour)).Width(1.5)
-                           .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)))
+    gc.SetPen(get_pen(gc, colour, 1.5, cap=wx.CAP_ROUND, join=wx.JOIN_ROUND))
     gc.SetBrush(wx.TRANSPARENT_BRUSH)
     half = size / 2
     if name == 'up' or name == 'down':
@@ -263,9 +273,6 @@ def draw_glyph(gc, name, cx, cy, size, colour):
         arm = half * 0.7
         gc.StrokeLine(cx - arm, cy, cx + arm, cy)
         gc.StrokeLine(cx, cy - arm, cx, cy + arm)
-
-
-# ---------------------------------------------------------------- 조작부
 
 
 class Control:
@@ -305,14 +312,12 @@ class Control:
 
 
 class Knob(Control):
-    '''위아래로 끌어 돌린다. Shift 를 누르면 열 배 곱게, 두 번 누르면 기본값.'''
 
     cursor = wx.CURSOR_SIZENS
 
     def __init__(self, label, get, put, low, high, default, text, log=False,
                  bipolar=False, step=None, ends=None):
         super().__init__()
-        # 값 호 양 끝 아래의 최소·최대 글씨(Harrison 콘솔처럼). 없으면 쓰지 않는다.
         self.ends = ends
         self.label = label
         self.get = get
@@ -325,7 +330,7 @@ class Knob(Control):
         self.step = step
         self.origin = None
 
-    # 참을 돌려주면 흐리게 그린다 — 이 손잡이를 켜고 끄는 단추가 꺼져 있을 때. 돌리는 것은 그대로 된다.
+    # callable: true draws the knob dimmed while its switch is off
     inactive = None
 
     def to_ratio(self, value):
@@ -352,7 +357,7 @@ class Knob(Control):
         if self.origin is None:
             return
         top, ratio, fine = self.origin
-        # Shift 를 끌기 도중에 누르거나 떼도 손잡이가 튀지 않게 그 자리에서 다시 잡는다.
+        # re-anchor when Shift changes mid-drag so the knob does not jump
         if shift != fine:
             self.origin = (point.y, self.to_ratio(self.get()), shift)
             return
@@ -364,11 +369,11 @@ class Knob(Control):
         self.origin = None
 
     def on_dclick(self, point):
-        # 기본값을 그때 묻는 장치도 있다(VST: 플러그인을 올려 봐야 안다).
+        # a VST answers its default only once loaded
         self.put(self.default() if callable(self.default) else self.default)
 
     def get_reach(self, gc, width):
-        '''가운데에서 보이는 왼쪽 끝까지. 값 글씨는 바뀌어 넣지 않는다(놓인 자리가 춤춘다).'''
+        # value text is left out, or the placement would shift with it
         radius = min(width / 2 - 4, KNOB_RADIUS)
         track = radius + 3
         reach = track + 1.5
@@ -386,31 +391,26 @@ class Knob(Control):
         rect = self.rect
         cx = rect.x + rect.width / 2
         radius = min(rect.width / 2 - 4, KNOB_RADIUS)
-        # 플러그인 파라미터 이름은 길이를 플러그인이 정한다. 옆 손잡이에 닿기 전에 자른다.
         idle = bool(self.inactive and self.inactive())
         if idle:
             accent = RACK['led_off']
         label, size = fit_label(gc, self.label, rect.width - 2)
         draw_text(gc, label, cx, rect.y + (LABEL_SIZE - size), size, RACK['faint'] if idle else RACK['dim'],
                   align='center', engraved=True)
-        # 이름 글씨 아래로 값 호의 바깥 끝까지 LABEL_GAP 을 띄운다. 호는 반지름 + 3 에 3 화소 굵기.
         cy = rect.y + LABEL_HEIGHT + LABEL_GAP + radius + 4.5
 
         ratio = self.to_ratio(self.get()) if self.enabled else 0.0
         track = radius + 3
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(RACK['track'])).Width(2.5)
-                               .Cap(wx.CAP_BUTT)))
+        gc.SetPen(get_pen(gc, RACK['track'], 2.5, cap=wx.CAP_BUTT))
         gc.SetBrush(wx.TRANSPARENT_BRUSH)
         gc.StrokePath(get_arc(gc, cx, cy, track, KNOB_START, KNOB_START + KNOB_SWEEP))
         if self.enabled:
             origin = KNOB_START + KNOB_SWEEP * (0.5 if self.bipolar else 0.0)
             angle = KNOB_START + KNOB_SWEEP * ratio
             if abs(angle - origin) > 0.01:
-                gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(accent)).Width(2.5)
-                                       .Cap(wx.CAP_BUTT)))
+                gc.SetPen(get_pen(gc, accent, 2.5, cap=wx.CAP_BUTT))
                 gc.StrokePath(get_arc(gc, cx, cy, track, origin, angle))
 
-        # 몸통은 평평한 원판 하나. 손이 얹히면 테두리만 밝아진다.
         body = radius - 2
         lit = self.hovered or self.pressed
         gc.SetPen(get_pen(gc, mix(RACK['knob_edge'], '#ffffff', 0.18) if lit else
@@ -418,9 +418,8 @@ class Knob(Control):
         gc.SetBrush(wx.Brush(wx.Colour(RACK['knob_top'] if lit else RACK['knob'])))
         gc.DrawEllipse(cx - body, cy - body, body * 2, body * 2)
         angle = KNOB_START + KNOB_SWEEP * ratio
-        gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(
-            wx.Colour(RACK['text'] if self.enabled and not idle else RACK['faint'])).Width(2)
-            .Cap(wx.CAP_ROUND)))
+        gc.SetPen(get_pen(gc, RACK['text'] if self.enabled and not idle else RACK['faint'], 2,
+                          cap=wx.CAP_ROUND))
         gc.StrokeLine(cx + math.cos(angle) * body * 0.20, cy + math.sin(angle) * body * 0.20,
                       cx + math.cos(angle) * body * 0.78, cy + math.sin(angle) * body * 0.78)
 
@@ -437,8 +436,6 @@ class Knob(Control):
 
 
 class Switch(Control):
-    '''켜고 끄는 값(플러그인의 ON/OFF 파라미터). 손잡이와 같은 칸에 같은 이름 줄, 손잡이
-    자리에 글씨 단추 하나. 누를 때마다 0 과 1 을 오간다. 켜지면 장치 색.'''
 
     WIDTH = 40
     HEIGHT = 20
@@ -471,7 +468,7 @@ class Switch(Control):
         self.put(0.0 if self.is_on() else 1.0)
 
     def on_dclick(self, point):
-        # 빨리 두 번 누르면 두 번째 누름은 두 번 누름으로 온다. 그것도 한 번 누름이다.
+        # a fast second press arrives as a double click
         self.on_click()
 
     def draw(self, gc, accent):
@@ -494,7 +491,6 @@ class Switch(Control):
 
 
 class Fader(Control):
-    '''그래픽 EQ 의 세로 막대. 끌면 손잡이가 커서를 따라간다.'''
 
     cursor = wx.CURSOR_SIZENS
     THUMB = (14, 8)
@@ -568,7 +564,6 @@ class Fader(Control):
 
 
 class Button(Control):
-    '''글자 단추. confirm 을 주면 첫 누름에 물음으로 바뀌고 두 번째에 실행한다.'''
 
     HEIGHT = 22
 
@@ -623,7 +618,6 @@ class Button(Control):
 
 
 class Chip(Control):
-    '''이름 띠의 구역 토글. 누르면 action, active() 가 참이면 켜진 모양.'''
 
     def __init__(self, caption, action, active, tip=''):
         super().__init__()
@@ -632,7 +626,7 @@ class Chip(Control):
         self.active = active
         self.tip = tip
 
-    # Analyzer 의 칩과 같은 손맛: 누르는 순간 바뀌고, 빨리 두 번 눌러도 한 번(사용자: 일관성).
+    # toggles on press; a double click counts once
     def on_down(self, point, shift):
         self.action()
 
@@ -647,7 +641,6 @@ class Chip(Control):
 
 
 class IconButton(Button):
-    '''장치 오른쪽 끝의 작은 단추. 위·아래로 옮기기와 빼기.'''
 
     SIZE = 18
 
@@ -671,7 +664,6 @@ class IconButton(Button):
             fill_rect(gc, fill, rect.x, rect.y, rect.width, rect.height, 3)
         colour = '#101215' if asking else (RACK['text'] if self.hovered else RACK['dim'])
         if not self.enabled:
-            # 더 갈 수 없는 쪽: 꺼진 불과 같은 어두운 회색.
             colour = RACK['led_off']
         draw_glyph(gc, self.glyph, rect.x + rect.width / 2, rect.y + rect.height / 2, 10,
                    colour)
@@ -681,7 +673,6 @@ class IconButton(Button):
 
 
 class Power(Control):
-    '''장치의 켜고 끄기. 불이 켜져 있으면 소리가 그 장치를 지난다.'''
 
     def __init__(self, get, put):
         super().__init__()
@@ -693,7 +684,6 @@ class Power(Control):
 
     def draw(self, gc, accent):
         rect = self.rect
-        # 머리 띠의 다른 아이콘 단추(접기·옮기기·빼기)처럼 올리면 바탕 칸, 누르면 어둡게(사용자: 일관성).
         if self.pressed or self.hovered:
             box = wx.Rect(rect).Inflate(2, 2)
             fill_rect(gc, RACK['button_down'] if self.pressed else RACK['button_hover'], box.x, box.y,
@@ -706,7 +696,6 @@ class Power(Control):
 
 
 class Segment(Control):
-    '''선택지 몇 개를 한 줄(또는 한 칸씩 세로)로. 고른 것만 불이 켜진다.'''
 
     def __init__(self, options, get, put, vertical=False):
         super().__init__()
@@ -775,9 +764,6 @@ class Segment(Control):
             width, height = gc.GetTextExtent(text)[:2]
             gc.DrawText(text, cell.x + (cell.width - width) / 2,
                         cell.y + (cell.height - height) / 2)
-
-
-# ---------------------------------------------------------------- 값 글씨
 
 
 def get_db_text(value):

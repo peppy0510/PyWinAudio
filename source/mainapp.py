@@ -12,10 +12,12 @@ import wx
 
 import eapo
 
+from meterview import FPS
 from meterview import MeterView
 from rack import GAP
 from rack import MARGIN
 from rack import RackView
+from rackui import GRAPHICS
 from settingsbox import SettingsBox
 from sidemenu import SideMenu
 from titlebar import TitleBar
@@ -24,28 +26,25 @@ from utilities import THEMES
 from utilities import apply_clip_siblings
 from utilities import apply_no_caption
 from utilities import apply_titlebar_theme
+from utilities import cancel_job
+from utilities import finish_jobs
 from utilities import get_asset_path
 from utilities import get_frame_margins
 from utilities import load_settings
+from utilities import run_latest
 from utilities import save_settings
 
 
 HOVER_INTERVAL = 120
 SAVE_DELAY = 600
-# 랙을 고친 뒤 엔진에 넘기기까지. 손잡이를 돌리는 동안 파일을 너무 자주 바꾸지 않게.
 WRITE_DELAY = 120
-RETRY_DELAY = 250
 DEFAULT_SIZE = (860, 900)
 MIN_SIZE = (400, 480)
 
-# 캡션을 떼고 그 자리를 직접 그린다. 크기 조절과 스냅은 그대로 남는다.
 FRAME_STYLE = wx.DEFAULT_FRAME_STYLE & ~wx.CAPTION
 
-# 기억된 위치가 이만큼도 화면에 안 걸리면 사라진 모니터로 본다.
 MIN_VISIBLE_WIDTH = 120
 MIN_VISIBLE_HEIGHT = 32
-
-PAGE_KEYS = ('rack', 'settings')
 
 MENU_ITEMS = (('Rack', 'rack'), None, ('Settings', 'settings'))
 
@@ -53,7 +52,6 @@ MENU_ITEMS = (('Rack', 'rack'), None, ('Settings', 'settings'))
 class MainFrame(wx.Frame):
 
     stored_rect = None
-    # 흉내 낸 최대화 이전의 자리. None 이면 최대화 상태가 아니다.
     restore_bounds = None
     ready = False
     saver = None
@@ -73,10 +71,8 @@ class MainFrame(wx.Frame):
         self.set_icon()
 
         self.book = wx.Simplebook(self)
-        # 계기판은 랙 위에 고정해 두고 랙만 굴린다. 따로 다시 그려져 랙을 건드리지 않는다.
         self.rackpage = wx.Panel(self.book)
-        # 바탕은 랙과 계기판이 늘 덮는다. 크기가 바뀔 때마다 바탕을 먼저 지우면 둘이 다시 그려지기 전에
-        # 지운 색이 비쳐 깜빡였다(사용자) — 지우지 않는다.
+        # erasing first shows the bare page between the two repaints
         self.rackpage.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.rackpage.Bind(wx.EVT_ERASE_BACKGROUND, lambda event: None)
         self.rackpage.Bind(wx.EVT_PAINT, lambda event: wx.PaintDC(self.rackpage))
@@ -87,8 +83,7 @@ class MainFrame(wx.Frame):
         self.rack = RackView(self.rackpage, theme, settings.get('chain', []),
                              settings.get('power', True), self.on_rack_change,
                              settings.get('mixer', {}))
-        # 사이저를 쓰지 않고 두 창을 직접 놓는다. 핀을 뺀 Analyzer 판은 랙 위에 겹쳐 떠서
-        # 랙이 굴러가는 만큼 같이 올라간다. 랙은 그 아래를 칠하지 않게 형제를 클립한다.
+        # the unpinned analyzer floats over the rack, so the rack must clip siblings
         apply_clip_siblings(self.rack)
         self.meters.Raise()
         self.meters.on_height = self.place_rackpage
@@ -103,7 +98,7 @@ class MainFrame(wx.Frame):
 
         self.titlebar = TitleBar(self, theme, self.on_menu, self.toggle_maximize)
         self.sidemenu = SideMenu(self, theme, MENU_ITEMS, self.on_select)
-        # 서랍은 페이지 위에 떠 있다. 페이지 쪽이 형제를 클립해 주어야 살아남는다.
+        # the drawer floats over the page, so the page must clip siblings
         apply_clip_siblings(self.book)
 
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -115,26 +110,24 @@ class MainFrame(wx.Frame):
         self.on_settings()
 
         self.timer = wx.Timer(self)
-        self.Bind(wx.EVT_TIMER, self.on_tick)
+        self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
+        # Windows runs its own loop while the window moves or sizes: CallAfter waits there,
+        # timer messages still come
+        self.sizing = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_sizing, self.sizing)
+        self.Bind(wx.EVT_MOVE_START, self.on_move_start)
+        self.Bind(wx.EVT_MOVE_END, self.on_move_end)
         self.Bind(wx.EVT_SIZE, self.on_size)
         self.Bind(wx.EVT_MAXIMIZE, self.on_maximize)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_char)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.timer.Start(HOVER_INTERVAL)
         self.restore_rect(settings)
-        self.restore_page(settings)
         self.ready = True
-        # 앱을 닫아 둔 사이 엔진 쪽 파일이 바뀌었을 수 있다. 랙이 정본이니 한 번 써 둔다.
+        # the engine file may have changed while the app was closed
         self.write_rack()
 
-    def restore_page(self, settings):
-        stored = settings.get('page')
-        index = PAGE_KEYS.index(stored) if stored in PAGE_KEYS else 0
-        self.book.SetSelection(index)
-        self.sidemenu.set_selection(self.get_menu_index(index))
-
     def place_rackpage(self):
-        # 계기판과 랙을 하나씩 옮기는 사이의 반쯤 놓인 모습이 그려지지 않게, 다 옮긴 뒤 한 번에 그린다.
         self.rackpage.Freeze()
         try:
             self.lay_rackpage()
@@ -143,9 +136,7 @@ class MainFrame(wx.Frame):
 
     def lay_rackpage(self):
         width, height = self.rackpage.GetClientSize()
-        # 한 단일 때: 핀을 꽂으면 계기판은 랙 위에 고정, 빼면 랙 맨 아래(ADD 다음)에 함께 구른다.
         meters = self.meters
-        # 랙이 여러 단이면 판도 랙의 한 칸이다. 자리는 랙이 정하고, 랙을 그린 뒤 place_meters 가 옮긴다.
         meters.flowing = self.rack.get_column_count(width) > 1
         if meters.flowing:
             meters.left_margin = meters.right_margin = 0
@@ -158,7 +149,7 @@ class MainFrame(wx.Frame):
             self.rack.Refresh()
             return
         meters.left_margin = MARGIN
-        # 핀을 빼면 판이 랙 위에 겹친다. 오른쪽 여백은 비워 랙 스크롤바가 판 뒤에 숨지 않게.
+        # keep the rack scrollbar clear of the floating analyzer
         meters.right_margin = MARGIN if meters.pinned else 0
         meters_width = width if meters.pinned else max(1, width - MARGIN)
         meter_height = meters.get_height(meters_width)
@@ -178,12 +169,11 @@ class MainFrame(wx.Frame):
         self.rack.Refresh()
 
     def place_meters(self):
-        '''랙이 굴러가거나 장치 수가 바뀔 때마다 핀을 뺀 판을 랙 맨 아래 자리로 옮긴다.'''
         if not self.rack:
             return
         if self.meters.flowing:
             rect = self.rack.analyzer_slot.rect
-            # 랙이 아직 여러 단으로 그려지기 전이면 자리가 없다. 그린 뒤 다시 불린다.
+            # the slot exists only after the rack draws in columns
             if self.rack.columns < 2 or rect.width <= 0:
                 return
             target = wx.Rect(rect.x, rect.y - self.rack.offset, rect.width, rect.height)
@@ -195,21 +185,6 @@ class MainFrame(wx.Frame):
         y = self.rack.meters_y - self.rack.offset
         if self.meters.GetPosition().y != y:
             self.meters.SetPosition(wx.Point(0, y))
-
-    def get_menu_index(self, page):
-        '''구분선이 끼어 있어 항목의 차례와 페이지의 차례가 그 뒤로 어긋난다.'''
-        count = -1
-        for index, item in enumerate(MENU_ITEMS):
-            if item:
-                count += 1
-                if count == page:
-                    return index
-        return 0
-
-
-    def get_page_key(self):
-        index = self.book.GetSelection()
-        return PAGE_KEYS[index] if 0 <= index < len(PAGE_KEYS) else PAGE_KEYS[0]
 
     def is_rect_visible(self, rect):
         for index in range(wx.Display.GetCount()):
@@ -257,12 +232,10 @@ class MainFrame(wx.Frame):
 
     def on_select(self, index):
         self.book.SetSelection(index)
-        key = PAGE_KEYS[index]
-        if key == 'settings':
+        if self.book.GetPage(index) is self.settingsbox:
             self.settingsbox.refresh_state()
-        elif key == 'rack':
+        else:
             self.rack.refresh_state()
-        self.store_settings()
 
     def on_rack_change(self):
         if self.writer is not None and self.writer.IsRunning():
@@ -271,29 +244,24 @@ class MainFrame(wx.Frame):
         self.store_settings()
 
     def write_rack(self):
-        '''못 쓰면 버리지 않고 잠시 뒤 다시 쓴다. 마지막 변경이 엔진에 못 가면 다음 변경
-        때까지 소리가 화면과 어긋난 채로 남는다.'''
         if self.rack.state != 'linked':
             return
-        # 접기처럼 보기만 바뀐 것은 같은 글이 나온다. 엔진이 다시 읽을 까닭이 없으니 쓰지 않는다.
+        # view-only changes render the same text; skip so the engine does not reload
         text = eapo.render(self.rack.get_chain(), self.rack.power)
         path = os.path.join(self.rack.folder, eapo.OWN_FILE)
         if text == self.written and os.path.exists(path):
             return
-        try:
-            eapo.write_text(path, text)
-            self.written = text
-        except OSError:
-            if self.writer is not None and self.writer.IsRunning():
-                return
-            self.writer = wx.CallLater(RETRY_DELAY, self.write_rack)
+        self.written = text
+        run_latest(path, eapo.write_later(path, text))
 
     def on_unlink(self):
+        # a queued write would bring the rack file back after unlinking
+        if self.rack.folder:
+            cancel_job(os.path.join(self.rack.folder, eapo.OWN_FILE))
         self.rack.on_unlink()
 
     def toggle_maximize(self):
-        '''캡션이 없는 창을 Windows 가 최대화하면 보이지 않는 여백만큼 화면
-        밖으로 넘치고 작업 표시줄까지 덮는다. 작업 영역에 맞춰 직접 채운다.'''
+        # Windows maximizes a captionless frame over the taskbar
         if self.restore_bounds is not None:
             bounds, self.restore_bounds = self.restore_bounds, None
             self.SetRect(wx.Rect(*bounds))
@@ -342,8 +310,20 @@ class MainFrame(wx.Frame):
         self.sidemenu.place(TitleBar.HEIGHT)
         event.Skip()
 
+    def on_move_start(self, event):
+        self.sizing.Start(1000 // FPS)
+        event.Skip()
+
+    def on_move_end(self, event):
+        self.sizing.Stop()
+        event.Skip()
+
+    def on_sizing(self, event):
+        self.meters.tick()
+        self.rack.tick()
+
     def on_tick(self, event):
-        # 서랍은 바깥 누름·ESC·캡처 잃음으로도 닫힌다. 햄버거 표시는 여기서 따라간다.
+        # the drawer also closes on its own (outside click, Esc, lost capture)
         self.titlebar.set_menu_open(self.sidemenu.is_open())
 
     def store_settings(self):
@@ -358,7 +338,6 @@ class MainFrame(wx.Frame):
             'theme': self.theme_name,
             'on_top': self.settingsbox.ontop.GetValue(),
             'wide_layout': self.settingsbox.wide.GetValue(),
-            'page': self.get_page_key(),
             'rect': self.stored_rect,
             'power': self.rack.power,
             'chain': self.rack.get_chain(),
@@ -371,27 +350,28 @@ class MainFrame(wx.Frame):
 
     def on_close(self, event):
         self.timer.Stop()
+        self.sizing.Stop()
         if self.saver is not None and self.saver.IsRunning():
             self.saver.Stop()
         if self.writer is not None and self.writer.IsRunning():
             self.writer.Stop()
-        # 닫을 때는 다시 해 볼 틈이 없다. 마지막 상태를 늘 한 번 더 쓴다.
-        self.writer = None
         self.write_rack()
-        if self.writer is not None:
-            self.writer.Stop()
         self.meters.close()
         self.rack.close()
-        # A/B 비교 중에 닫아도 엔진이 원래 소리로 남지 않게 푼다.
+        # do not leave the engine bypassed after an A/B compare
         from automastermeter import READER
         READER.set_bypass(False)
-        # 마우스를 잡은 채로 창이 사라지면 나중에 죽는다. 먼저 놓게 한다.
+        # release the mouse capture before the frame goes
         self.sidemenu.close()
+        # close() starts the slide timer, which crashes (0xc0000374) after destroy
+        self.sidemenu.timer.Stop()
         if self.restore_bounds is not None:
             self.stored_rect = list(self.restore_bounds)
         elif self.IsIconized() is False and self.IsMaximized() is False:
             self.stored_rect = list(self.GetRect())
         self.flush_settings()
+        # the last rack write and settings must land before the process goes
+        finish_jobs()
         event.Skip()
 
 
@@ -401,3 +381,5 @@ def launch_mainapp():
     frame.Show()
     apply_titlebar_theme(frame, THEMES[frame.theme_name])
     app.MainLoop()
+    # cached graphics objects must go before wx shuts GDI+ down, or exit crashes (0xc0000005)
+    GRAPHICS.clear()

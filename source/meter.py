@@ -4,15 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-출력 장치로 나가는 소리를 WASAPI 루프백으로 받아 계기판에 넘긴다.
-
-루프백은 Equalizer APO 가 다 처리한 뒤의 소리다(실측: 랙에 Preamp -12 dB 를 넣으면
-시험음이 그만큼 내려가고, 8 kHz 저역 통과를 넣으면 18 kHz 가 사라진다). 그래서 계기판이
-보여 주는 것이 곧 스피커로 나가는 것이다.
-
-받기는 따로 도는 스레드가 맡고, 화면은 그 결과를 꺼내 그리기만 한다. 소리가 안 나는
-동안 WASAPI 가 아무것도 주지 않는 장치가 있어, 그때는 받는 쪽이 0 을 채워 준다.
 '''
 
 
@@ -26,19 +17,15 @@ import numpy
 
 
 RATE = 48000
-# 장치가 모아 둘 수 있는 양. 그 안에서 10 ms 마다 쌓인 만큼 한꺼번에 가져온다.
 BUFFER = 4800
 POLL = 0.010
 HISTORY = 8192
 RMS_WINDOW = 0.3
-# 기본 출력 장치가 바뀌었는지 이만큼마다 본다.
 DEVICE_CHECK = 2.0
 RETRY_DELAY = 1.0
 CLIP_LEVEL = 0.999
 
-# ITU-R BS.1770 라우드니스. K-가중(고역 선반 + RLB 고역 통과) 두 biquad 의 48 kHz 계수.
-# 100 ms 마다 그 구간의 K-가중 에너지를 FFT 칸 무게로 낸다(파스발) — 파이썬에서 표본마다
-# 되먹임 필터를 돌리지 않으려고.
+# ITU-R BS.1770 K-weighting at 48 kHz, applied as FFT bin weights per 100 ms block
 K_STAGES = (
     ((1.53512485958697, -2.69169618940638, 1.19839281085285),
      (1.0, -1.69065929318241, 0.73248077421585)),
@@ -50,7 +37,7 @@ SHORT_BLOCKS = 30
 ABSOLUTE_GATE = -70.0
 RELATIVE_GATE = -10.0
 LOUDNESS_FLOOR = -70.0
-# 누적(I) 값은 한 시간 치까지만 쥔다. 그 위로는 오래된 것부터 버린다.
+# one hour of 100 ms blocks
 INTEGRATED_LIMIT = 36000
 
 
@@ -76,6 +63,7 @@ class Capture:
     def __init__(self):
         self.lock = threading.Lock()
         self.history = numpy.zeros((HISTORY, 2), dtype='float32')
+        self.history_index = 0
         self.peaks = [0.0, 0.0]
         self.clips = [False, False]
         self.rms_window = int(RATE * RMS_WINDOW)
@@ -104,17 +92,15 @@ class Capture:
             self.thread = None
         with self.lock:
             self.history[:] = 0
+            self.history_index = 0
             self.squares[:] = 0
             self.peaks = [0.0, 0.0]
             self.blocks = []
             self.pending = numpy.zeros((0, 2), dtype='float32')
 
     def run(self):
-        '''soundcard 는 가져온 스레드에서만 COM 을 연다. 껐다 켜면 새 스레드가 뜨므로
-        여기서 직접 연다 — 안 그러면 0x800401f0(CO_E_NOTINITIALIZED) 로 죽는다.'''
         warnings.simplefilter('ignore')
-        # 처음 가져올 때는 soundcard 가 이 스레드의 COM 을 스스로 열고, 이미 열려 있으면
-        # (S_FALSE 를 실패로 읽어) 가져오기부터 죽는다. 그래서 가져온 다음에 연다.
+        # import first: soundcard fails when COM is already open, and a new thread needs its own
         try:
             import soundcard
         except Exception as error:
@@ -142,8 +128,7 @@ class Capture:
 
     def listen(self, soundcard, microphone, device_id):
         checked = time.perf_counter()
-        # 정해진 수를 기다리게 하면 soundcard 가 1 ms 안쪽 간격으로 장치를 들여다본다
-        # (받기만으로 CPU 8 %). 쉬었다가 쌓인 것만 가져오면 그 비용이 거의 사라진다.
+        # record(numframes=N) polls the device under 1 ms (8 % CPU); sleep and take what piled up
         with microphone.recorder(samplerate=RATE, channels=2, blocksize=BUFFER) as recorder:
             while self.running:
                 time.sleep(POLL)
@@ -164,8 +149,18 @@ class Capture:
         peaks = numpy.abs(block).max(axis=0)
         squares = block.astype('float64') ** 2
         with self.lock:
-            self.history = numpy.roll(self.history, -count, axis=0)
-            self.history[-count:] = block
+            if count >= HISTORY:
+                self.history[:] = block[-HISTORY:]
+                self.history_index = 0
+            else:
+                end = self.history_index + count
+                if end <= HISTORY:
+                    self.history[self.history_index:end] = block
+                else:
+                    split = HISTORY - self.history_index
+                    self.history[self.history_index:] = block[:split]
+                    self.history[:count - split] = block[split:]
+                self.history_index = end % HISTORY
             end = self.square_index + count
             if end <= self.rms_window:
                 self.squares[self.square_index:end] = squares
@@ -174,7 +169,7 @@ class Capture:
                 self.squares[self.square_index:] = squares[:split]
                 self.squares[:count - split] = squares[split:]
             self.square_index = end % self.rms_window
-            # 화면이 꺼내 갈 때까지 가장 큰 값을 쌓아 둔다. 그 사이 지나간 순간 피크를 놓치지 않게.
+            # keep the highest peak until the screen takes it
             self.peaks = [max(self.peaks[0], float(peaks[0])), max(self.peaks[1], float(peaks[1]))]
             for channel in (0, 1):
                 if peaks[channel] >= CLIP_LEVEL:
@@ -183,13 +178,12 @@ class Capture:
         self.feed_loudness(block)
 
     def feed_loudness(self, block):
-        '''100 ms 구간마다 L+R 의 K-가중 평균 제곱을 하나 쌓는다. 400 ms 창(M)이 넘어갈
-        때마다 그 값을 누적용으로도 남긴다 — 75 % 겹친 400 ms 창, 규격 그대로.'''
+        # BS.1770 gating blocks: 400 ms windows, 75 % overlap
         self.pending = numpy.concatenate((self.pending, block))
         while len(self.pending) >= LOUDNESS_BLOCK:
             part, self.pending = self.pending[:LOUDNESS_BLOCK], self.pending[LOUDNESS_BLOCK:]
             spectrum = numpy.abs(numpy.fft.rfft(part.astype('float64'), axis=0)) ** 2
-            # 한쪽 스펙트럼이라 DC·나이퀴스트를 뺀 칸은 두 번 센다.
+            # one-sided spectrum: count all but DC and Nyquist twice
             spectrum[1:-1] *= 2
             power = float((spectrum * K_WEIGHTS[:, None]).sum()) / LOUDNESS_BLOCK ** 2
             with self.lock:
@@ -202,8 +196,6 @@ class Capture:
                         del self.gated[:-INTEGRATED_LIMIT]
 
     def take_loudness(self):
-        '''(M, S, I) LUFS. I 는 절대 게이트 -70 을 넘은 창들의 평균에서 다시 -10 LU 아래를
-        걸러 낸 평균(BS.1770-4).'''
         with self.lock:
             blocks = list(self.blocks)
             gated = numpy.array(self.gated) if self.gated else None
@@ -223,13 +215,12 @@ class Capture:
             self.gated = []
 
     def take(self, samples):
-        '''(지난번 이후의 피크, RMS, 클립, 최근 표본 samples 개). 피크는 꺼내면 비운다.'''
         with self.lock:
             peaks = self.peaks
             self.peaks = [0.0, 0.0]
             rms = numpy.sqrt(self.squares.mean(axis=0))
             clips = list(self.clips)
-            recent = self.history[-samples:].copy()
+            recent = numpy.roll(self.history, -self.history_index, axis=0)[-samples:]
         return peaks, [float(rms[0]), float(rms[1])], clips, recent
 
     def reset_clips(self):

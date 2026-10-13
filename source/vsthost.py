@@ -4,12 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-VST2 플러그인을 이 프로세스에 직접 올린다. 소리는 audiodg 안의 Equalizer APO 가
-처리하고, 여기서는 편집기 창을 띄우고 파라미터를 읽고 쓰는 데만 쓴다. 그래서
-processReplacing 은 한 번도 부르지 않는다.
-
-VST2 의 바깥 모양은 C 구조체 하나와 함수 포인터 넷이라 ctypes 로 충분하다.
 '''
 
 
@@ -65,7 +59,7 @@ MASTER_END_EDIT = 44
 SAMPLE_RATE = 48000.0
 BLOCK_SIZE = 512
 
-# 이름 칸은 규격상 8~64 바이트지만 그보다 길게 쓰는 플러그인이 흔하다. 넉넉히 준다.
+# names are 8-64 bytes by spec, but plugins often write more
 TEXT_SIZE = 256
 
 
@@ -112,7 +106,6 @@ AEffect._fields_ = [
 
 
 class ParameterProperties(ctypes.Structure):
-    '''VST2 의 VstParameterProperties. 묶음(구역)과 켜고 끄는 값을 알려 주는 플러그인이 있다.'''
     _fields_ = [('stepFloat', ctypes.c_float), ('smallStepFloat', ctypes.c_float),
                 ('largeStepFloat', ctypes.c_float), ('label', ctypes.c_char * 64),
                 ('flags', ctypes.c_int32), ('minInteger', ctypes.c_int32),
@@ -141,7 +134,7 @@ kernel32.FreeLibrary.argtypes = [wintypes.HMODULE]
 
 
 def get_bitness(path):
-    '''PE 머리의 Machine 값. 32 비트 플러그인은 이 프로세스에 못 올린다.'''
+    # a 32-bit plugin cannot load into this process
     try:
         with open(path, 'rb') as file:
             head = file.read(4096)
@@ -153,8 +146,7 @@ def get_bitness(path):
 
 
 class Plugin:
-    '''플러그인 하나. 열고 나면 반드시 close 로 닫는다 — 편집기 창이 남은 채로
-    DLL 을 내리면 다음 메시지에서 프로세스가 죽는다.'''
+    # always close: unloading the DLL with its editor open crashes on the next message
 
     def __init__(self, path, on_change=None):
         self.path = path
@@ -165,7 +157,7 @@ class Plugin:
 
         if get_bitness(path) == 32:
             raise VstError('32-bit plugin')
-        # 플러그인이 옆에 둔 DLL 을 찾게 제 폴더를 검색 경로에 넣는다.
+        # let the plugin find the DLLs beside it
         directory = os.path.dirname(path)
         cookie = None
         try:
@@ -189,7 +181,7 @@ class Plugin:
             self.unload()
             raise VstError('Not a VST2 plugin')
 
-        # 콜백 객체를 잡아 두지 않으면 GC 가 거둬 가고 플러그인이 빈 주소를 부른다.
+        # keep the callback referenced, or GC frees it and the plugin calls a dead address
         self.master = AudioMaster(self.on_master)
         pointer = EntryPoint(address)(self.master)
         if not pointer or pointer.contents.magic != MAGIC:
@@ -268,7 +260,6 @@ class Plugin:
         return self.get_text(EFF_GET_PARAM_DISPLAY, index)
 
     def get_properties(self, index):
-        '''(구역 번호, 켜고 끄는 값인지). 알려 주지 않는 플러그인이면 (0, None).'''
         props = ParameterProperties()
         try:
             if not self.call(EFF_GET_PARAMETER_PROPERTIES, index, 0,
@@ -289,7 +280,6 @@ class Plugin:
         self.effect.setParameter(self.pointer, index, float(value))
 
     def get_chunk(self):
-        '''플러그인이 내준 상태 덩어리를 base64 로. Equalizer APO 의 ChunkData 와 같은 형식이다.'''
         data = ctypes.c_void_p()
         size = self.call(EFF_GET_CHUNK, 0, 0, ctypes.cast(ctypes.byref(data), ctypes.c_void_p))
         if size <= 0 or not data.value:
@@ -301,7 +291,7 @@ class Plugin:
             raw = base64.b64decode(text)
         except Exception:
             return False
-        # 플러그인이 다 읽을 때까지 버퍼가 살아 있어야 한다.
+        # the buffer must live until the plugin has read it
         self.chunk_buffer = ctypes.create_string_buffer(raw, len(raw))
         self.call(EFF_SET_CHUNK, 0, len(raw), ctypes.cast(self.chunk_buffer, ctypes.c_void_p))
         return True
@@ -316,8 +306,7 @@ class Plugin:
         return (width, height) if width > 0 and height > 0 else None
 
     def open_editor(self, handle):
-        '''handle 은 편집기를 담을 자식 창. 크기는 열기 전에 묻는 플러그인과 연 뒤에야
-        답하는 플러그인이 섞여 있어 두 번 묻는다.'''
+        # some plugins answer the size only after opening, so ask twice
         if not self.has_editor or self.editor:
             return None
         size = self.get_editor_size()

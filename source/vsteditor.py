@@ -4,9 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-플러그인이 제 손으로 그리는 편집기를 담는 창. 플러그인은 바꾼 값을 알려 주지 않는
-일이 많아(audioMasterAutomate 를 부르지 않는다) 값을 짧은 간격으로 직접 읽어 본다.
 '''
 
 
@@ -17,7 +14,7 @@ from utilities import apply_titlebar_theme
 
 
 IDLE_INTERVAL = 30
-# 값 읽기는 쉬는 박자 몇 번에 한 번. 덩어리를 쓰는 플러그인은 읽기가 무겁다.
+# plugins rarely send audioMasterAutomate, so poll; chunk reads are heavy
 POLL_EVERY = 8
 
 
@@ -44,7 +41,6 @@ class EditorFrame(wx.Frame):
         self.timer.Start(IDLE_INTERVAL)
 
     def place(self, parent):
-        '''주 창 오른쪽에 붙인다. 자리가 없으면 주 창 위 가운데.'''
         frame = parent.GetScreenRect()
         width, height = self.GetSize()
         index = max(0, wx.Display.GetFromWindow(parent))
@@ -60,7 +56,7 @@ class EditorFrame(wx.Frame):
         if plugin is None:
             return
         plugin.idle()
-        # 편집기가 스스로 크기를 바꾸겠다고 하면 창을 맞춘다(Large GUI 같은 단추).
+        # follow the editor's own resize requests (a Large GUI switch)
         if plugin.requested_size:
             width, height = plugin.requested_size
             plugin.requested_size = None

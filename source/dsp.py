@@ -4,9 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-화면에 그릴 주파수 응답. Equalizer APO 의 필터는 RBJ 쿡북의 biquad 라 같은 식으로
-크기만 구한다. 그림이 맞으면 되므로 표본 주파수는 48 kHz 하나로 고정한다.
 '''
 
 
@@ -83,7 +80,7 @@ def get_parametric_curve(bands, freqs):
 
 
 def get_graphic_curve(points, gains, freqs):
-    '''엔진은 점 사이를 로그 주파수 위의 직선으로 잇는다. 양 끝 바깥은 끝 값을 잇는다.'''
+    # the engine joins points linearly on log frequency and holds the ends
     pairs = sorted(zip(points, gains))
     if not pairs:
         return [0.0] * len(freqs)
@@ -114,7 +111,6 @@ def get_unit_curve(unit, freqs):
 
 
 def get_peak_boost(units):
-    '''랙 전체가 가장 많이 올리는 양. Preamp 를 그만큼 내리면 꽉 찬 소리도 잘리지 않는다.'''
     freqs = get_frequencies(240)
     total = [0.0] * len(freqs)
     for unit in units:

@@ -99,7 +99,7 @@ class SettingsBox(wx.Panel):
         self.unlink.set_enabled(state == 'linked')
 
     def on_devices(self):
-        '''장치 고르기는 HKLM 을 쓰므로 승격해서 띄운다. 띄우고 나면 우리 일은 끝이다.'''
+        # DeviceSelector writes HKLM, so it runs elevated
         path = eapo.get_device_selector()
         if not path:
             return
@@ -115,7 +115,6 @@ class SettingsBox(wx.Panel):
             os.startfile(folder)
 
     def on_unlink_click(self):
-        '''되돌리기 어려운 일이라 두 번 누른다. 첫 누름에 단추가 물음으로 바뀐다.'''
         if self.asking is None:
             self.unlink.set_caption('Unlink?')
             self.unlink.set_tone('warn')

@@ -4,12 +4,6 @@
 '''
 author: Taehong Kim
 email: peppy0510@hotmail.com
-
-랙 한 장. 맨 위에 주 장치, 그 아래로 사용자가 꽂은 장치들, 맨 끝에 빈 칸.
-모두 이 캔버스 하나가 그리고, 누름도 여기서 받아 해당 조작부에 넘긴다.
-
-세로 스크롤은 직접 민다. 휠은 언제나 랙을 굴린다 — 손잡이는 끌어서만 돌아간다.
-그래야 굴리다가 지나가는 손잡이가 몰래 바뀌는 일이 없다.
 '''
 
 
@@ -48,33 +42,24 @@ from mixunit import MixerUnit
 from utilities import Canvas
 
 
-# 창 좌우·아래 여백. 14 는 넓어 보였다(사용자) — 스크롤바(폭 4 + 안쪽 3)가 들어갈 만큼만.
 MARGIN = 8
 GAP = 3
-# 믹서 레벨을 다시 그리는 박자와 세션 목록을 다시 읽는 간격.
 MIXER_FPS = 30
 MIXER_REFRESH = 1000
 MIXER_FALL = 15.0
 WHEEL_STEP = 60
-# 스크롤바는 평소에 숨는다. 굴리거나 끌 때, 오른쪽 여백에 손이 갈 때만 가는 막대로 뜬다.
-# 색·모양은 PyWinAgent 의 막대 그대로(사용자): 폭 4, 모서리 2, 어두운 테두리색. 자리는 오른쪽 여백의
-# 가운데 — 끝에서 3 안쪽이면 판 쪽 틈이 1 이라 판에 붙어 보였다(사용자).
 SCROLLBAR = 4
 SCROLLBAR_INSET = (MARGIN - SCROLLBAR) // 2
 SCROLLBAR_COLOUR = '#3a3f46'
 SCROLL_MIN = 24
-# 굴리고 나면 0.7 초 머문 뒤 0.4 초에 걸쳐 옅어진다 — 처음엔 빠르게, 끝에서 늦게(PyWinAgent 와 같다).
 SCROLL_HOLD = 0.7
 SCROLL_FADE = 0.4
 SCROLL_STEP = 16
-# 넓은 창에서 판을 여러 단으로 펴는 기준 폭 (PyWinAgent 와 같다).
 TWO_COLUMNS = 820
 THREE_COLUMNS = 1240
 
 
 def split_columns(heights, count):
-    '''차례를 지킨 채 count 개의 단으로 끊는다. 가장 높은 단이 가장 낮아지는 자리를
-    다 따져 고른다 (판이 열 개 안쪽이라 순식간이다). 단마다 첫 판의 자리를 준다.'''
     prefix = [0]
     for height in heights:
         prefix.append(prefix[-1] + height)
@@ -84,7 +69,7 @@ def split_columns(heights, count):
     for c in range(2, count + 1):
         best[c], cut[c] = [], []
         for i in range(n + 1):
-            # 같으면 뒤쪽에서 끊는다. 판이 단보다 적을 때 빈 단이 앞이 아니라 끝에 남게.
+            # on ties cut later, so empty columns end up last
             choice = min(range(i, -1, -1), key=lambda j: max(best[c - 1][j], prefix[i] - prefix[j]))
             best[c].append(max(best[c - 1][choice], prefix[i] - prefix[choice]))
             cut[c].append(choice)
@@ -96,8 +81,6 @@ def split_columns(heights, count):
 
 
 class MasterUnit:
-    '''랙의 머리. 랙 전체를 켜고 끄고, Equalizer APO 와 이어졌는지 알린다. 이름 띠 한 줄뿐이다
-    — 다른 장치의 띠와 같은 자리·같은 글씨.'''
 
     height = FOLDED
 
@@ -139,7 +122,6 @@ class MasterUnit:
         left = self.power.rect.x + 22
         right = self.text_right
         if self.rack.state == 'linked' and self.rack.power:
-            # 계기판의 피크와 헷갈리지 않게, 이것은 EQ 들이 올리는 최대 이득이라고 부른다.
             boost = self.rack.get_peak_boost() + self.rack.get_preamp()
             text = 'EQ BOOST %s' % get_db_text(boost)
             width = draw_text(gc, text, right, rect.y + FOLDED / 2 - 6, 8, RACK['dim'],
@@ -152,14 +134,12 @@ class MasterUnit:
 
 
 class AddSlot:
-    '''비어 있는 랙 칸. 꽂을 장치를 고르는 단추가 줄지어 있다.'''
 
     height = U + 30
 
     def __init__(self, rack):
         self.rack = rack
         self.rect = wx.Rect()
-        # 기본 장치는 메뉴 단추 하나로 묶고, VST 는 따로(사용자: 단추가 자리를 많이 차지한다).
         self.builtin = Button('Built-in  \u25be', self.on_builtin)
         self.buttons = [self.builtin, Button('VST plugin…', lambda: rack.add('vst'))]
 
@@ -179,7 +159,6 @@ class AddSlot:
 
     LABEL = 'ADD A DEVICE'
     LABEL_SIZE = 8.5
-    # 이름표와 단추를 한 줄에(사용자). 좁아서 안 들어가면 단추가 다음 줄로 내려간다.
     MARGIN = 8
 
     def layout(self, gc, rect):
@@ -201,7 +180,6 @@ class AddSlot:
 
     def draw(self, gc):
         rect = self.rect
-        # 장치 판과 같은 좌우 끝에 선다. 안으로 들이면 랙과 끝이 어긋나 보인다.
         inner = rect
         gc.SetPen(wx.Pen(wx.Colour(RACK['line']), 1, wx.PENSTYLE_SHORT_DASH))
         gc.SetBrush(wx.TRANSPARENT_BRUSH)
@@ -214,8 +192,6 @@ class AddSlot:
 
 
 class AnalyzerSlot:
-    '''여러 단일 때 Analyzer 판이 앉을 랙 칸. 판은 따로 된 창이라 여기서는 자리만 잡고
-    그리지 않는다. 주 창이 이 자리에 판을 옮겨 놓는다.'''
 
     height = 0
 
@@ -237,8 +213,6 @@ class AnalyzerSlot:
 
 
 class RemoveConfirm:
-    '''빼기 전에 그 장치 판 위에 덮는 물음. 무엇을 빼는지 이름으로 묻고, 단추 둘 가운데
-    Remove 를 눌러야만 뺀다. 그 밖의 누름과 Esc 는 모두 그만두기다.'''
 
     def __init__(self, rack, unit):
         self.rack = rack
@@ -279,8 +253,7 @@ class RemoveConfirm:
 
 
 class Pacer(threading.Thread):
-    '''정해진 박자로 믹서 레벨 한 장을 부탁한다. 앞 장을 다 그리기 전이면 건너뛴다.
-    wx.Timer 는 15.6 ms 경계에 걸려 고르게 오지 않는다.'''
+    # wx.Timer snaps to the 15.6 ms tick; a thread paces frames evenly
 
     def __init__(self, view):
         super().__init__(name='mixer-pacer', daemon=True)
@@ -316,14 +289,13 @@ class RackView(Canvas):
         self.master = MasterUnit(self)
         self.mixer = MixerUnit(self, mixer if mixer is not None else {})
         self.slot = AddSlot(self)
-        # 주 창이 Analyzer 판을 넘겨준다. 여러 단일 때만 랙의 한 칸이 된다.
         self.analyzer = None
         self.analyzer_slot = AnalyzerSlot(self)
         self.columns = 1
-        # 앞서 A/B 비교 중에 앱이 죽었으면 엔진이 원래 소리로 남아 있다. 켤 때 푼다.
+        # undo a bypass left by a crash during an A/B compare
         from automastermeter import READER
         READER.set_bypass(False)
-        # Leveler 시절 칸은 Auto Master 로 옮기고, 엔진 설정 줄도 새 DLL 로 곧장 다시 쓰게 한다.
+        # rewrite the engine line so it loads the renamed DLL
         if [data for data in chain if migrate_automaster(data)]:
             wx.CallAfter(lambda: self and self.on_unit_change())
         self.units = [build_unit(data, self) for data in chain]
@@ -336,12 +308,9 @@ class RackView(Canvas):
         self.boost = None
         self.confirm = None
         self.meter_boxes = []
-        # 핀을 뺀 Analyzer 판이 앉을 자리. 신호 흐름대로 맨 아래(ADD 다음)에 비워 둔다(사용자).
         self.bottom_space = 0
         self.meters_y = 0
-        # 맨 위 판 앞의 틈. 위에 핀 꽂은 Analyzer 가 있으면 장치 사이 GAP, 없으면 창 여백 MARGIN(주 창이 정한다).
         self.top_gap = MARGIN
-        # 설정의 Wide layout. 끄면 창이 넓어도 한 단.
         self.wide = True
         self.on_scroll = None
         self.notified = None
@@ -349,8 +318,7 @@ class RackView(Canvas):
         self.near_edge = False
         self.fade_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_scroll_fade, self.fade_timer)
-        # WS_EX_COMPOSITED 를 켜 두면 믹서 레벨 한 칸만 다시 그리라고 해도 창 전체가 다시
-        # 그려진다(실측: 한 코어 92 %). 버퍼는 AutoBufferedPaintDC 가 맡는다.
+        # WS_EX_COMPOSITED repaints the whole canvas for one meter (92 % of a core)
         self.SetDoubleBuffered(False)
         self.update_box = None
         self.last_tick = time.perf_counter()
@@ -367,8 +335,6 @@ class RackView(Canvas):
         self.Bind(wx.EVT_MOUSEWHEEL, self.on_wheel)
         self.Bind(wx.EVT_MOUSE_CAPTURE_LOST, self.on_capture_lost)
         self.Bind(wx.EVT_SIZE, lambda event: (self.clamp(), event.Skip()))
-
-    # ------------------------------------------------------------ 자료
 
     def get_chain(self):
         return [unit.data for unit in self.units]
@@ -411,10 +377,7 @@ class RackView(Canvas):
         if self.state != 'unlinked':
             return
         imported = eapo.link(self.folder)
-        # 이미 꽂아 둔 장치가 있으면 가져온 것을 그 위에 얹는다. 이어 붙이기 전의
-        # 소리가 먼저 지나가고 랙이 그 뒤를 잇는다. 끊었다 다시 이으면 되돌려 놓았던
-        # 줄을 또 가져오게 되므로, 랙에 이미 같은 줄이 있는 장치는 건너뛴다.
-        # 플러그인은 값이 그 사이 바뀌었을 수 있어 파일 경로로 가린다.
+        # relinking would import the restored lines again; skip what the rack already has
         present = [eapo.render_unit(unit.data) for unit in self.units]
         plugins = {unit.data['path'].lower() for unit in self.units
                    if unit.data['kind'] == 'vst' and unit.data.get('path')}
@@ -437,22 +400,19 @@ class RackView(Canvas):
     def add(self, kind):
         self.cancel_remove()
         unit = build_unit(make_unit(kind), self)
-        # VST 는 파일을 고른 뒤에야 칸을 꽂는다. 먼저 꽂으면 고르는 동안 빈 판이 랙에 보였다(사용자).
-        # 그만두면 아무것도 남지 않고, 골랐는데 못 올렸으면 남겨 두어 까닭을 보인다.
+        # add a VST only after a file is picked; an empty plate showed while choosing
         path = unit.pick_path() if kind == 'vst' else None
         if kind == 'vst' and path is None:
             return
         self.units.append(unit)
         if path is not None:
             unit.load(path)
-        # Auto Master 는 깔린 자리에서 바로 올린다. 깔려 있지 않으면 판에 까닭이 뜬다.
         if kind == 'automaster' and os.path.exists(unit.data['path']):
             unit.load(unit.data['path'])
         self.on_unit_change()
         wx.CallAfter(self.reveal, unit)
 
     def remove(self, unit):
-        '''✕ 는 묻기만 한다. 빼는 것은 confirm_remove.'''
         if unit in self.units:
             self.reset_pointer()
             self.confirm = RemoveConfirm(self, unit)
@@ -470,7 +430,6 @@ class RackView(Canvas):
         self.on_unit_change()
 
     def cancel_remove(self):
-        '''물음을 거둔다. 거둘 것이 있었으면 참.'''
         if self.confirm is None:
             return False
         self.confirm = None
@@ -489,22 +448,21 @@ class RackView(Canvas):
     def refresh_mixer(self):
         if not self:
             return
-        # 접어 두었거나 다른 페이지에 있으면 목록을 읽지 않는다. 펼치는 순간 한 번 읽는다.
-        if self.IsShownOnScreen() and not self.mixer.folded and self.mixer.refresh():
+        if self.IsShownOnScreen() and not self.GetTopLevelParent().IsIconized() and \
+                not self.mixer.folded and self.mixer.refresh():
             self.Refresh()
         self.refresher = wx.CallLater(MIXER_REFRESH, self.refresh_mixer)
 
     def tick(self):
-        '''믹서 레벨만 움직인다. 그 자리만 다시 그리게 해 나머지 장치는 건드리지 않는다.'''
         if not self:
             return
         self.pacer.pending = False
         now = time.perf_counter()
         elapsed = min(0.2, now - self.last_tick)
         self.last_tick = now
-        if not self.IsShownOnScreen():
+        if not self.IsShownOnScreen() or self.GetTopLevelParent().IsIconized():
             return
-        # Auto Master 의 보정 계기는 세 번에 한 번(약 10 Hz)만 다시 칠한다.
+        self.meter_boxes = []
         self.meter_ticks = getattr(self, 'meter_ticks', 0) + 1
         if self.meter_ticks % 3 == 0:
             room = self.get_room()
@@ -514,14 +472,15 @@ class RackView(Canvas):
                     continue
                 box = wx.Rect(rect.x, rect.y - self.offset, rect.width, rect.height)
                 if box.y + box.height >= 0 and box.y <= room:
-                    self.RefreshRect(box.Inflate(2, 2), False)
+                    box.Inflate(2, 2)
+                    if unit.knobs and self.confirm is None:
+                        self.meter_boxes.append((box, unit))
+                    self.RefreshRect(box, False)
         if self.mixer.folded:
             return
         changed = self.mixer.update_levels(elapsed, MIXER_FALL)
-        # 판 전체가 아니라 켜진 칸 수가 바뀐 레벨 막대 자리만 다시 칠하게 한다. on_paint 가
-        # 이 칸들만 걸린 칠하기를 알아보고 장치들을 다시 그리지 않고 막대만 얹는다.
+        # repaint only meters whose lit count changed
         room = self.get_room()
-        self.meter_boxes = []
         for column in self.mixer.columns:
             if column.channel.key not in changed:
                 continue
@@ -529,7 +488,7 @@ class RackView(Canvas):
             box = wx.Rect(meter.x, meter.y - self.offset, meter.width, meter.height)
             if box.y + box.height < 0 or box.y > room:
                 continue
-            self.meter_boxes.append(box)
+            self.meter_boxes.append((box, self.mixer))
             self.RefreshRect(box, False)
 
     def close(self):
@@ -541,13 +500,8 @@ class RackView(Canvas):
             if hasattr(unit, 'close'):
                 unit.close()
 
-    # ------------------------------------------------------------ 자리
-
     def get_blocks(self):
-        # 신호 흐름 순: 앱 볼륨(Mixer) → 체인 전원 띠 → 장치들 → ADD(사용자). 전원 띠가 Mixer 위에
-        # 있으면 Mixer 까지 끄는 것처럼 보였다.
         blocks = [self.mixer, self.master] + self.units + [self.slot]
-        # 여러 단이면 Analyzer 도 다른 판과 같이 단에 든다. 핀을 꽂으면 맨 앞, 빼면 맨 끝.
         if self.analyzer is not None and self.columns > 1:
             if self.analyzer.pinned:
                 blocks.insert(0, self.analyzer_slot)
@@ -556,7 +510,6 @@ class RackView(Canvas):
         return blocks
 
     def get_controls(self):
-        # 묻는 동안 그 장치의 손잡이는 덮개 아래에 있다. 덮개 단추만 받는다.
         if self.confirm is not None:
             for control in self.confirm.get_controls():
                 yield control
@@ -574,7 +527,7 @@ class RackView(Canvas):
     def measure(self, gc, block, width):
         if hasattr(block, 'get_height'):
             return block.get_height(width)
-        # ADD 칸은 단추가 줄을 바꿔야 키가 정해진다. 한 번 놓아 보고 잰다.
+        # ADD wraps its buttons, so lay it out to measure
         block.layout(gc, wx.Rect(MARGIN, 0, width, block.height))
         return block.rect.height
 
@@ -584,8 +537,6 @@ class RackView(Canvas):
             self.Refresh()
 
     def layout(self, gc, width):
-        '''문서의 단처럼. 첫 단을 위에서 아래로 채우고 다음 단으로 넘어간다. 차례는 신호
-        흐름 그대로, 끊는 자리는 단 높이가 가장 고르게 되는 곳. 계기판은 단 밖(위·아래)에 폭 전체.'''
         self.columns = self.get_column_count(width)
         blocks = self.get_blocks()
         count = min(self.columns, len(blocks))
@@ -594,14 +545,14 @@ class RackView(Canvas):
         while count > 1:
             base = (inner - GAP * (count - 1)) // count
             starts = split_columns([self.measure(gc, block, base) for block in blocks], count)
-            # 키 큰 판 하나가 단 높이를 정하면 뒤 단이 비어 남는다. 빈 단은 두지 않고 단 수를 줄여 판을 넓힌다.
+            # drop empty columns: one tall plate can leave the last ones bare
             used = len(set(starts) - {len(blocks)})
             if used == count:
                 break
             count = used
         if count == 1:
             starts = [0]
-        # 단 폭은 정수 px. 남는 화소는 앞 단부터 하나씩 — 오른쪽 끝이 창 여백과 맞는다.
+        # spare pixels go to the first columns so the right edge meets the margin
         base, extra = divmod(inner - GAP * (count - 1), count)
         widths = [base + (1 if index < extra else 0) for index in range(count)]
         bottom = self.top_gap
@@ -616,9 +567,7 @@ class RackView(Canvas):
             bottom = max(bottom, y)
             x += span + GAP
         y = bottom
-        # 아래 Analyzer 판과는 장치 사이와 같은 간격만 둔다. 레일만 보이는 틈을 남기지 않는다.
         self.meters_y = y
-        # 맨 아래 여백은 좌우와 같은 MARGIN 하나. 마지막 판 뒤의 GAP 까지 더하면 3 화소 넓었다(사용자).
         self.total = (y + self.bottom_space if self.bottom_space else y - GAP) + MARGIN
         if self.confirm is not None:
             self.confirm.layout(gc)
@@ -630,8 +579,7 @@ class RackView(Canvas):
         return self.GetClientSize().height
 
     def clamp(self):
-        # 휠·스크롤바 끌기 셈은 실수가 나온다. wx.Point·wx.Rect 는 실수를 거절해서, 한 번 실수가
-        # 되면 마우스 찾기·그리기가 줄줄이 죽는다(핀을 뺀 Analyzer 판도 따라오지 못했다).
+        # wx.Point and wx.Rect reject floats, and wheel and drag math yield them
         self.offset = int(round(max(0, min(self.offset, self.total - self.get_room()))))
 
     def reveal(self, unit):
@@ -642,12 +590,10 @@ class RackView(Canvas):
             self.Refresh()
 
     def draw(self, gc, width, height):
-        # 스크롤바는 오른쪽 여백 안에 겹쳐 그린다. 생길 때마다 랙 폭이 줄면 위 계기판과
-        # 끝이 어긋나고 장치들이 옆으로 밀려 보인다.
+        # the scrollbar overlays the margin so the rack width never changes
         rack_width = width
         self.layout(gc, rack_width)
         self.clamp()
-        # 굴렀거나 장치가 늘고 줄어 아래 Analyzer 자리가 바뀌면 판을 옮기게 알린다.
         rect = self.analyzer_slot.rect if self.columns > 1 else None
         key = (self.offset, self.meters_y, rect and tuple(rect))
         if self.on_scroll is not None and self.notified != key:
@@ -658,8 +604,7 @@ class RackView(Canvas):
         gc.Translate(0, -self.offset)
         draw_rails(gc, MARGIN, 0, rack_width - MARGIN * 2, max(self.total, self.offset + height),
                    EAR)
-        # 다시 그릴 곳이 일부뿐이면(믹서 레벨) 거기 걸친 장치만 그린다. 곡선을 다시 셈하는
-        # EQ 들까지 30 장마다 그리면 무겁다.
+        # partial repaints draw only the blocks they touch; EQ curves are costly
         box = self.update_box
         top, bottom = self.offset, self.offset + height
         if box is not None:
@@ -675,23 +620,29 @@ class RackView(Canvas):
         self.draw_scrollbar(gc, width, height)
 
     def on_paint(self, event):
-        box = self.GetUpdateRegion().GetBox()
+        region = self.GetUpdateRegion()
+        box = region.GetBox()
         boxes, self.meter_boxes = self.meter_boxes, []
-        if boxes and self.is_meter_only(box, boxes):
+        if boxes and self.is_meter_only(region, boxes):
             dc = wx.PaintDC(self)
-            self.mixer.paint_levels(dc, self.offset, box)
+            painted = set()
+            for target, owner in boxes:
+                if owner not in painted and target.Intersects(box):
+                    painted.add(owner)
+                    owner.paint_levels(dc, self.offset, box)
             return
         self.update_box = box
         super().on_paint(event)
         self.update_box = None
 
-    def is_meter_only(self, box, boxes):
-        '''칠할 곳이 레벨 막대들을 묶은 줄 안에만 있으면 참. 손잡이 위에 손이 올라간 것처럼
-        다른 곳도 함께 칠해야 하면 거짓 — 그때는 평소처럼 다 그린다.'''
-        union = wx.Rect(boxes[0])
-        for meter in boxes[1:]:
-            union = union.Union(meter)
-        return union.Contains(box)
+    def is_meter_only(self, region, boxes):
+        pieces = wx.RegionIterator(region)
+        while pieces.HaveRects():
+            piece = pieces.GetRect()
+            if not any(target.Contains(piece) for target, owner in boxes):
+                return False
+            pieces.Next()
+        return True
 
     def draw_scrollbar(self, gc, width, height):
         self.thumb = None
@@ -699,7 +650,6 @@ class RackView(Canvas):
             return
         size = max(SCROLL_MIN, height * height / self.total)
         top = (height - size) * self.offset / max(1, self.total - height)
-        # 잡는 자리는 오른쪽 여백 전체. 그리는 막대만 가늘다.
         self.thumb = wx.Rect(width - MARGIN, round(top), MARGIN, round(size))
         alpha = self.get_scroll_alpha()
         if alpha <= 0:
@@ -709,7 +659,6 @@ class RackView(Canvas):
                   width - SCROLLBAR_INSET - SCROLLBAR, self.thumb.y, SCROLLBAR, self.thumb.height, 2)
 
     def get_scroll_alpha(self):
-        '''끌거나 오른쪽 여백에 손이 있으면 다 보이고, 그 밖에는 굴린 뒤 머물렀다가 옅어진다.'''
         if self.thumb_drag is not None or self.near_edge:
             return 1.0
         elapsed = time.perf_counter() - self.scrolled_at - SCROLL_HOLD
@@ -722,13 +671,11 @@ class RackView(Canvas):
         if not self:
             return
         width, height = self.GetClientSize()
-        # 옅어지는 동안은 막대 자리만 다시 그린다. 판 전체를 60 번 그리면 무겁다.
         self.RefreshRect(wx.Rect(width - MARGIN, 0, MARGIN, height), False)
         if self.get_scroll_alpha() <= 0:
             self.fade_timer.Stop()
 
     def show_scrollbar(self):
-        '''굴린 뒤 잠깐 보이고 다시 숨는다. 숨길 때 한 번 더 그린다.'''
         self.scrolled_at = time.perf_counter()
         if not self.fade_timer.IsRunning():
             self.fade_timer.Start(SCROLL_STEP)
@@ -739,10 +686,7 @@ class RackView(Canvas):
             if near:
                 self.Refresh()
             else:
-                # 손이 떠나면 곧장 지우지 않고 굴린 뒤처럼 머물렀다 옅어진다.
                 self.show_scrollbar()
-
-    # ------------------------------------------------------------ 마우스
 
     def to_rack(self, position):
         return wx.Point(position.x, position.y + self.offset)
@@ -781,7 +725,6 @@ class RackView(Canvas):
             return
         point = self.to_rack(position)
         control = self.find(point)
-        # 물음 밖을 누르면 그만둔다. 그 누름은 덮개가 걷힌 자리에 그대로 간다.
         if self.confirm is not None and control not in self.confirm.get_controls():
             self.cancel_remove()
             control = self.find(point)
@@ -799,7 +742,7 @@ class RackView(Canvas):
         if control is None:
             return
         control.on_dclick(point)
-        # 두 번 누름의 두 번째 누름은 누름으로 오지 않는다. 단추는 두 번째도 누름으로 친다.
+        # the second press of a double click arrives only as a dclick
         if isinstance(control, (Button, Power, Segment)):
             control.on_down(point, event.ShiftDown())
             self.active = control
@@ -849,8 +792,7 @@ class RackView(Canvas):
         if self.active is not None:
             return
         steps = event.GetWheelRotation() / (event.GetWheelDelta() or 120)
-        # 휠은 언제나 랙을 굴린다. 믹서 페이더도 휠로는 움직이지 않는다 — 굴리다 지나가는
-        # 페이더가 볼륨을 바꿔 버렸다(사용자 지적으로 되돌림).
+        # the wheel never moves faders: scrolling past one changed the volume
         self.offset -= steps * WHEEL_STEP
         self.clamp()
         self.show_scrollbar()
