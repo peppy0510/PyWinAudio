@@ -306,7 +306,10 @@ class MixerUnit:
             if path.lower().endswith('.ico'):
                 image = wx.Image(path, wx.BITMAP_TYPE_ICO)
             else:
+                # an exe with no icon resource (ShellExperienceHost) makes wx pop an error box
+                quiet = wx.LogNull()
                 icon = wx.Icon(wx.IconLocation(path, 0))
+                del quiet
                 if icon.IsOk():
                     copy = wx.Bitmap()
                     copy.CopyFromIcon(icon)
