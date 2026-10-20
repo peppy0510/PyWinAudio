@@ -19,6 +19,15 @@
  * 리미터: 5 ms 앞을 내다보고 줄인다. 앞으로 올 피크까지 필요한 이득의 최솟값을 창으로 잡고,
  * 같은 길이의 상자 평균으로 매끈하게 내려가 피크가 올 때 정확히 그 값에 닿는다. 풀릴 때는
  * 따로 천천히. 소리는 그만큼 늦게 나가고, 그 늦음을 initialDelay 로 알린다.
+ * Drive 는 리미터 앞에서 미는 이득(0~+30 dB) — 헤드룸을 끝까지 채운다(LoudMax 의 Threshold 자리, 사용자).
+ * Smooth 는 두 번째 풀림: 줄인 양의 바닥을 0.3 초로 따라가고, 마지막으로 깊어진 뒤 0.15 초를
+ * 기다렸다가 초당 10 dB 로만 오른다. 빠른 풀림은 그 바닥 위로 못 올라가 꽉 민 소리의 출렁임이
+ * 줄고(±0.50 → 0.30 dB, LoudMax 0.26), 큰 구간 뒤에는 2 초쯤에 걸쳐 돌아온다(LoudMax 출력 곡선
+ * 실측: 0.2 초 2.4 dB, 1 초 9.7 dB, 2 초 17.6 dB). 기다림을 늘리면 출렁임은 더 줄지만 그만큼 덜 차고
+ * 늦게 돌아온다(0.25 초: 0.26 dB, −0.3 dB 더 작음).
+ * Attack 은 줄이기 시작하는 길이(0.5~5 ms). 늦음은 늘 5 ms 그대로 두고 이득만 그 차이만큼 늦춰
+ * 짧은 비탈도 피크에 정확히 닿는다. 5 ms 는 타격음 4 ms 앞부터 주변 소리까지 눌러 뭉개 들리고,
+ * LoudMax 는 0.5 ms 앞부터만 줄인다(실측, 사용자 "LoudMax 가 더 깔끔한 느낌").
  *
  * 스테레오 보정(AGC 와 리미터 사이): 들어오는 소리를 약 5 초 평균으로 재서
  *   좌우 균형 — 한쪽이 늘 크면 양쪽에 반씩 나눠 맞춘다(최대 ±3 dB씩).
@@ -155,34 +164,39 @@ enum {
     P_AIR,
     P_LIMITER,
     P_CEILING,
+    P_DRIVE,
+    P_SMOOTH,
+    P_ATTACK,
     PARAM_COUNT
 };
 
 static const char *PARAM_NAMES[PARAM_COUNT] = {
     "AGC", "Target", "Max Gain", "Speed", "Balance", "Phase Fix", "Width Limit", "Max Width",
-    "Bass Mono", "Mono Wide", "Wide Target", "Air", "Limiter", "Ceiling"
+    "Bass Mono", "Mono Wide", "Wide Target", "Air", "Limiter", "Ceiling",
+    "Drive", "Smooth", "Attack"
 };
 /* 구역: 1 AGC, 2 Stereo, 3 Limiter. 랙이 구역 사이에 금을 긋는다.
  * 예전 Stereo 하나가 좌우 균형과 폭 상한을 함께 켜고 꺼서, 스테레오 처리가 다 꺼지는 것처럼 읽혔다 —
  * Balance·Width Limit 둘로 나눴다(사용자). 랙은 저장된 Stereo 값을 둘에 옮긴다. */
-static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3};
+static const int16_t PARAM_CATEGORIES[PARAM_COUNT] = {1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3};
 static const char *CATEGORY_LABELS[4] = {"", "AGC", "Stereo", "Limiter"};
 static const char *PARAM_LABELS[PARAM_COUNT] = {
-    "", "LUFS", "dB", "s", "", "", "", "S/M dB", "", "", "S/M dB", "dB", "", "dB"
+    "", "LUFS", "dB", "s", "", "", "", "S/M dB", "", "", "S/M dB", "dB", "", "dB", "dB", "", "ms"
 };
 /* 처음 값: AGC 켬, -16 LUFS, 최대 +9 dB, 약 3 초, 좌우 균형 켬, 폭 상한 켬(S/M -6 dB), 저역 모노 켬,
  * 모노 넓히기 켬, 목표 넓이 S/M -7.5 dB(보통 스테레오 곡의 가운데 대역은 이보다 넓어 손대지 않는다 —
  * 실측 진짜 스테레오 -6.5 보다 조금 좁게, 사용자), 고역 몫(Air) +2 dB(3 대역 전과 같은 소리),
- * 위상 바로잡기 켬, 리미터 켬, -1 dBFS. */
+ * 위상 바로잡기 켬, 리미터 켬, -1 dBFS. Drive 0 dB·Smooth 끔 — 넣기 전과 같은 소리. Attack 은 1 ms
+ * (0.5~5 ms 를 재어 본 가운데 앞 눌림·출렁임이 가장 적고 잡음은 LoudMax 보다 적다, 사용자). */
 static const float PARAM_DEFAULTS[PARAM_COUNT] = {
     1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, 1.0f, 12.0f / 14.0f, 1.0f, 1.0f, 10.5f / 18.0f, 8.0f / 12.0f,
-    1.0f, 5.0f / 6.0f
+    1.0f, 5.0f / 6.0f, 0.0f, 0.0f, 1.0f / 9.0f
 };
 
 static int is_switch(int32_t index)
 {
     return index == P_AGC || index == P_BALANCE || index == P_PHASE_FIX || index == P_WIDTH_LIMIT ||
-           index == P_BASS_MONO || index == P_MONO_WIDE || index == P_LIMITER;
+           index == P_BASS_MONO || index == P_MONO_WIDE || index == P_LIMITER || index == P_SMOOTH;
 }
 
 #define TARGET_LOW -24.0
@@ -249,6 +263,11 @@ static const double BAND_OFFSET[BANDS] = {-5.0, 0.0, 0.0};
 #define LOOKAHEAD_TIME 0.005
 #define RELEASE_TIME 0.08
 #define MAX_LOOKAHEAD 1024
+#define DRIVE_HIGH 30.0
+#define SMOOTH_ATTACK 0.3      /* 초: 바닥이 깊어질 때 */
+#define SMOOTH_RATE 10.0       /* dB/초: 바닥이 풀릴 때 */
+#define ATTACK_LOW 0.0005
+#define SMOOTH_HOLD 0.15       /* 초: 마지막으로 깊어진 뒤 이만큼 기다렸다 풀린다 */
 
 /* ------------------------------------------------------------ 계기(공유 메모리) */
 
@@ -409,6 +428,11 @@ typedef struct {
     int head;
     double held_sum;
     double release;        /* 지금 풀리고 있는 이득 */
+    double floor_db;       /* Smooth 의 바닥(dB, 0 이하) */
+    double floor_coef, floor_step;
+    int floor_hold, hold_length;
+    int attack;                   /* 비탈 길이(표본), lookahead 이하 */
+    float late_gain[MAX_LOOKAHEAD];  /* 비탈이 짧으면 이득을 lookahead - attack 만큼 늦춘다 */
     MeterSlot *meter;      /* 계기 칸(없으면 NULL) */
     double release_coef;
 } AutoMaster;
@@ -452,6 +476,16 @@ static double clamp(double value, double low, double high)
 static double get_ceiling(const AutoMaster *self)
 {
     return CEILING_LOW * (1.0 - self->params[P_CEILING]);
+}
+
+static double get_drive(const AutoMaster *self)
+{
+    return DRIVE_HIGH * self->params[P_DRIVE];
+}
+
+static double get_attack(const AutoMaster *self)
+{
+    return ATTACK_LOW + (LOOKAHEAD_TIME - ATTACK_LOW) * self->params[P_ATTACK];
 }
 
 static int is_on(float value)
@@ -713,10 +747,17 @@ static void reset(AutoMaster *self)
     for (int index = 0; index < MAX_LOOKAHEAD; index++) {
         self->wanted[index] = 1.0f;
         self->held[index] = 1.0f;
+        self->late_gain[index] = 1.0f;
     }
+    self->attack = lookahead;
     self->held_sum = lookahead;
     self->head = 0;
     self->release = 1.0;
+    self->floor_db = 0.0;
+    self->floor_coef = 1.0 - exp(-1.0 / (self->rate * SMOOTH_ATTACK));
+    self->floor_step = SMOOTH_RATE / self->rate;
+    self->hold_length = (int)(self->rate * SMOOTH_HOLD);
+    self->floor_hold = 0;
 }
 
 /* ------------------------------------------------------------ 소리 */
@@ -744,11 +785,25 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
     double target = get_target(self);
     double max_gain = get_max_gain(self);
     double ceiling = pow(10.0, get_ceiling(self) / 20.0);
+    double drive = limit ? pow(10.0, get_drive(self) / 20.0) : 1.0;
+    int smooth_release = limit && is_on(self->params[P_SMOOTH]);
     double time = get_speed_time(self->params[P_SPEED]);
     /* 올릴 때는 정한 빠르기, 내릴 때는 세 배 빠르게 — 갑자기 커지는 소리를 오래 두지 않는다. */
     double up = 1.0 - exp(-1.0 / (self->rate * time));
     double down = 1.0 - exp(-3.0 / (self->rate * time));
     int lookahead = self->lookahead;
+    int attack = (int)(self->rate * get_attack(self) + 0.5);
+    if (attack < 1)
+        attack = 1;
+    if (attack > lookahead)
+        attack = lookahead;
+    if (attack != self->attack) {
+        /* 창 길이가 바뀌면 합을 새 창으로 다시 센다 */
+        self->held_sum = 0.0;
+        for (int k = 1; k <= attack; k++)
+            self->held_sum += self->held[(self->head - k + lookahead) % lookahead];
+        self->attack = attack;
+    }
     double deepest = 1.0;  /* 이 블록에서 리미터가 건 가장 작은 이득 */
     int any_sound = 0;
 
@@ -959,24 +1014,48 @@ static void process(AEffect *effect, float **inputs, float **outputs, int32_t fr
         }
 
         /* 리미터: 이 표본에 필요한 이득, 창 최솟값, 풀림, 상자 평균. */
+        left *= drive;
+        right *= drive;
         double peak = fabs(left) > fabs(right) ? fabs(left) : fabs(right);
         double need = (limit && peak > ceiling) ? ceiling / peak : 1.0;
         int head = self->head;
         self->wanted[head] = (float)need;
         double minimum = need;
-        for (int index = 0; index < lookahead; index++) {
-            if (self->wanted[index] < minimum)
-                minimum = self->wanted[index];
+        for (int k = 0; k < attack; k++) {
+            float value = self->wanted[(head - k + lookahead) % lookahead];
+            if (value < minimum)
+                minimum = value;
         }
         if (minimum < self->release)
             self->release = minimum;
         else
             self->release += (minimum - self->release) * self->release_coef;
-        self->held_sum += self->release - self->held[head];
-        self->held[head] = (float)self->release;
-        double smooth = self->held_sum / lookahead;
+        double limit_gain = self->release;
+        if (smooth_release) {
+            double need_db = 20.0 * log10(minimum);
+            if (need_db < self->floor_db) {
+                self->floor_db += (need_db - self->floor_db) * self->floor_coef;
+                self->floor_hold = self->hold_length;
+            } else if (self->floor_hold > 0)
+                self->floor_hold--;
+            else
+                self->floor_db = need_db < self->floor_db + self->floor_step ? need_db
+                                 : self->floor_db + self->floor_step;
+            double floor = pow(10.0, self->floor_db / 20.0);
+            if (floor < limit_gain)
+                limit_gain = floor;
+        } else {
+            self->floor_db = 0.0;
+        }
+        self->held_sum += limit_gain - self->held[(head - attack + lookahead) % lookahead];
+        self->held[head] = (float)limit_gain;
+        double smooth = self->held_sum / attack;
         if (smooth > 1.0)
             smooth = 1.0;
+        if (attack < lookahead) {
+            self->late_gain[head] = (float)smooth;
+            smooth = self->late_gain[(head - (lookahead - attack) + lookahead) % lookahead];
+        }
         if (smooth < deepest)
             deepest = smooth;
         any_sound |= sounding;
@@ -1093,6 +1172,7 @@ static void get_display(AutoMaster *self, int32_t index, char *text)
     case P_BASS_MONO:
     case P_MONO_WIDE:
     case P_LIMITER:
+    case P_SMOOTH:
         strcpy(text, is_on(self->params[index]) ? "ON" : "OFF");
         break;
     case P_AIR:
@@ -1115,6 +1195,12 @@ static void get_display(AutoMaster *self, int32_t index, char *text)
         break;
     case P_CEILING:
         sprintf(text, "%.1f", get_ceiling(self));
+        break;
+    case P_DRIVE:
+        sprintf(text, "%+.1f", get_drive(self));
+        break;
+    case P_ATTACK:
+        sprintf(text, "%.2f", get_attack(self) * 1000.0);
         break;
     default:
         text[0] = 0;

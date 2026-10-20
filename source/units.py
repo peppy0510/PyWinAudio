@@ -73,8 +73,9 @@ TITLES = {
 }
 
 ADDABLE = ('preamp', 'parametric', 'graphic', 'delay', 'stereo', 'automaster', 'vst')
-# audiodg (LocalService) must be able to read it
-AUTOMASTER_PATH = r'C:\Program Files\VSTPlugIns\PyWinAudio\PyWinAudioAutoMaster.dll'
+# audiodg (LocalService) must be able to read it; builds before the plugin store went here
+OLD_AUTOMASTER_PATH = r'C:\Program Files\VSTPlugIns\PyWinAudio\PyWinAudioAutoMaster.dll'
+AUTOMASTER_FAMILY = 'PyWinAudioAutoMaster'
 AUTOMASTER_FILE = 'pywinaudioautomaster.dll'
 AUTOMASTER_NAME = 'PyWinAudio Auto Master'
 OLD_AUTOMASTER_FILE = 'pywinaudioleveler.dll'
@@ -110,7 +111,7 @@ def make_unit(kind):
                 'chunk': None}
     if kind == 'automaster':
         # the engine gets a plain VST line
-        return {'kind': 'vst', 'on': True, 'path': AUTOMASTER_PATH, 'params': [], 'display': [],
+        return {'kind': 'vst', 'on': True, 'path': get_automaster_path(), 'params': [], 'display': [],
                 'chunk': None, 'name': AUTOMASTER_NAME, 'vendor': 'PyWinAudio'}
     return {'kind': 'custom', 'on': True, 'lines': []}
 
@@ -944,18 +945,48 @@ class VstUnit(Unit):
     def pick_path(self):
         start = os.path.dirname(self.data.get('path') or '') or self.rack.get_plugin_folder()
         with wx.FileDialog(self.rack, 'Choose a VST2 plugin', defaultDir=start,
-                           wildcard='VST2 plugin (*.dll)|*.dll',
+                           wildcard='VST2 plugin or its download (*.dll;*.zip)|*.dll;*.zip',
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
-            return dialog.GetPath()
+            path = dialog.GetPath()
+        if not path.lower().endswith('.zip'):
+            return path
+        import pluginstore
+        try:
+            return pluginstore.install_zip(path)
+        except Exception as error:
+            self.show_notice(str(error) or 'Could not install the archive')
+            self.rack.Refresh()
+            return None
 
     def on_choose(self):
         path = self.pick_path()
         if path is None:
             return False
-        self.load(path)
+        old = self.data.get('path') or ''
+        if old and os.path.basename(old).lower() == os.path.basename(path).lower():
+            self.swap(path)
+        else:
+            self.load(path)
+        import pluginstore
+        pluginstore.clean(self.data.get('path'), [unit.data.get('path') for unit in self.rack.units
+                                                  if unit.data['kind'] == 'vst'])
         return True
+
+    def swap(self, path):
+        # a newer build of the same plugin: saved values carry over by parameter name
+        self.close()
+        old = self.data['path']
+        self.data['path'] = path
+        self.data.pop('error', None)
+        if self.ensure_plugin() is None:
+            self.data['path'] = old
+            self.rack.Refresh()
+            return
+        self.build()
+        self.show_notice('Updated, settings kept')
+        self.changed()
 
     def load(self, path):
         self.close()
@@ -1238,7 +1269,8 @@ class AutoMasterUnit(VstUnit):
     RENAMED = {'Stereo': ('Balance', 'Width Limit')}
     # knob -> its switch; the knob draws dimmed while the switch is off
     DEPENDS = {'Target': 'AGC', 'Max Gain': 'AGC', 'Speed': 'AGC', 'Max Width': 'Width Limit',
-               'Wide Target': 'Mono Wide', 'Air': 'Mono Wide', 'Ceiling': 'Limiter'}
+               'Wide Target': 'Mono Wide', 'Air': 'Mono Wide', 'Ceiling': 'Limiter',
+               'Drive': 'Limiter', 'Smooth': 'Limiter', 'Attack': 'Limiter'}
 
     def __init__(self, data, rack):
         self.rename_params(data)
@@ -1341,7 +1373,7 @@ class AutoMasterUnit(VstUnit):
             return self.data['error']
         if self.notice:
             return self.notice
-        if not os.path.exists(self.data.get('path') or AUTOMASTER_PATH):
+        if not os.path.exists(self.data.get('path') or get_automaster_path()):
             return 'Not installed: run plugin\\install.ps1'
         return 'AGC, stereo, limiter'
 
@@ -1353,10 +1385,21 @@ def is_automaster_data(data):
     return data.get('kind') == 'vst' and os.path.basename(data.get('path') or '').lower() == AUTOMASTER_FILE
 
 
+def get_automaster_path():
+    import pluginstore
+    return pluginstore.get_latest(AUTOMASTER_FAMILY, 'PyWinAudioAutoMaster.dll') or OLD_AUTOMASTER_PATH
+
+
 def migrate_automaster(data):
-    if data.get('kind') != 'vst' or os.path.basename(data.get('path') or '').lower() != OLD_AUTOMASTER_FILE:
+    # the renamed Leveler, or an older build: point at the newest one, values carry over by name
+    path = os.path.basename(data.get('path') or '').lower()
+    if data.get('kind') != 'vst' or path not in (OLD_AUTOMASTER_FILE, AUTOMASTER_FILE):
         return False
-    data['path'] = AUTOMASTER_PATH
+    latest = get_automaster_path()
+    if path == AUTOMASTER_FILE and (not os.path.exists(latest) or
+                                    os.path.normcase(latest) == os.path.normcase(data['path'])):
+        return False
+    data['path'] = latest
     data['name'] = AUTOMASTER_NAME
     data.pop('defaults', None)
     return True

@@ -296,7 +296,7 @@ class RackView(Canvas):
         # undo a bypass left by a crash during an A/B compare
         from automastermeter import READER
         READER.set_bypass(False)
-        # rewrite the engine line so it loads the renamed DLL
+        # rewrite the engine line so it loads the newest (or renamed) DLL
         if [data for data in chain if migrate_automaster(data)]:
             wx.CallAfter(lambda: self and self.on_unit_change())
         self.units = [build_unit(data, self) for data in chain]

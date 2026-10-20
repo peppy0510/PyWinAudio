@@ -1,5 +1,6 @@
 */__pycache__
 */__test__
+/__test__
 *.pyc
 *.pyo
 *.log
