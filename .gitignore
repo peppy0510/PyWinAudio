@@ -5,10 +5,10 @@
 *.pyo
 *.log
 /.venv
-dist
-build
-source/dist
-source/build
+.dist
+.build
+source/.dist
+source/.build
 desktop.ini
 .sublime-workspace
 *.sublime-workspace
