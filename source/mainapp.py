@@ -21,6 +21,7 @@ from rackui import GRAPHICS
 from settingsbox import SettingsBox
 from sidemenu import SideMenu
 from titlebar import TitleBar
+from tray import TrayIcon
 from utilities import APP_NAME
 from utilities import THEMES
 from utilities import apply_clip_siblings
@@ -57,6 +58,8 @@ class MainFrame(wx.Frame):
     saver = None
     writer = None
     written = None
+    tray = None
+    quitting = False
 
     def __init__(self):
         settings = load_settings()
@@ -304,7 +307,27 @@ class MainFrame(wx.Frame):
         if theme_name != self.theme_name:
             self.theme_name = theme_name
             self.apply_theme()
+        if self.settingsbox.tray.GetValue() and self.tray is None:
+            self.tray = TrayIcon(self)
+        elif not self.settingsbox.tray.GetValue() and self.tray is not None:
+            self.remove_tray()
         self.store_settings()
+
+    def remove_tray(self):
+        self.tray.RemoveIcon()
+        self.tray.Destroy()
+        self.tray = None
+
+    def quit(self):
+        self.quitting = True
+        self.Close(True)
+
+    def show_window(self):
+        if self.IsIconized():
+            self.Iconize(False)
+        self.Show()
+        self.Raise()
+        self.SetFocus()
 
     def on_size(self, event):
         self.sidemenu.place(TitleBar.HEIGHT)
@@ -337,6 +360,8 @@ class MainFrame(wx.Frame):
         settings = {
             'theme': self.theme_name,
             'on_top': self.settingsbox.ontop.GetValue(),
+            'tray_icon': self.settingsbox.tray.GetValue(),
+            'close_to_tray': self.settingsbox.close_to_tray.GetValue(),
             'wide_layout': self.settingsbox.wide.GetValue(),
             'rect': self.stored_rect,
             'power': self.rack.power,
@@ -349,6 +374,18 @@ class MainFrame(wx.Frame):
         save_settings(settings)
 
     def on_close(self, event):
+        if (self.tray is not None and self.settingsbox.close_to_tray.GetValue()
+                and not self.quitting and event.CanVeto()):
+            event.Veto()
+            if self.restore_bounds is not None:
+                self.stored_rect = list(self.restore_bounds)
+            elif self.IsIconized() is False and self.IsMaximized() is False:
+                self.stored_rect = list(self.GetRect())
+            self.flush_settings()
+            # a second launch may have shown the window behind wx's back
+            self.Show(True)
+            self.Hide()
+            return
         self.timer.Stop()
         self.sizing.Stop()
         if self.saver is not None and self.saver.IsRunning():
@@ -372,6 +409,9 @@ class MainFrame(wx.Frame):
         self.flush_settings()
         # the last rack write and settings must land before the process goes
         finish_jobs()
+        # a live tray icon keeps the app running after the frame is gone
+        if self.tray is not None:
+            self.remove_tray()
         event.Skip()
 
 

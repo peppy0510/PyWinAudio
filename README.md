@@ -7,6 +7,7 @@
 * Every change is written to Equalizer APO's config, so the rack keeps working after the app is closed.
 * Link imports the current config.txt, and Unlink puts it back.
 * Dark and light themes.
+* A tray icon with Close to tray; the analyzer pauses while hidden.
 
 ## How to install
 

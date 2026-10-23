@@ -38,6 +38,11 @@ class SettingsBox(wx.Panel):
         self.asking = None
         self.ontop = SettingCard(self, theme, 'Always on top',
                                  'Keep the window above others', on_change)
+        self.tray = SettingCard(self, theme, 'Tray icon',
+                                'Show an icon in the notification area', on_change)
+        self.close_to_tray = SettingCard(self, theme, 'Close to tray',
+                                         'Closing hides the window instead of quitting',
+                                         on_change)
         self.dark = SettingCard(self, theme, 'Dark theme',
                                 'Use the dark colour scheme for the window', on_change)
         self.wide = SettingCard(self, theme, 'Wide layout',
@@ -54,17 +59,20 @@ class SettingsBox(wx.Panel):
         self.shortcut = ButtonCard(self, theme, 'Start menu',
                                    'Put a shortcut in the Start menu',
                                    'Create', self.on_shortcut)
-        self.cards = (self.ontop, self.dark, self.wide, self.status, self.devices, self.folder,
+        self.cards = (self.ontop, self.tray, self.close_to_tray, self.dark, self.wide, self.status, self.devices, self.folder,
                       self.unlink, self.shortcut)
 
         self.ontop.SetValue(settings.get('on_top', False))
+        self.tray.SetValue(settings.get('tray_icon', True))
+        self.close_to_tray.SetValue(settings.get('close_to_tray', False))
         self.dark.SetValue(settings.get('theme', 'dark') == 'dark')
         self.wide.SetValue(settings.get('wide_layout', True))
 
         self.groups = []
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.AddSpacer(MARGIN)
-        for title, cards in (('Window', (self.ontop, self.dark, self.wide)),
+        for title, cards in (('Window', (self.ontop, self.tray, self.close_to_tray, self.dark,
+                                         self.wide)),
                              ('Equalizer APO', (self.status, self.devices, self.folder,
                                                 self.unlink)),
                              ('Shortcut', (self.shortcut,))):

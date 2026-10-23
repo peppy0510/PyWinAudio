@@ -11,6 +11,7 @@ import os
 import sys
 
 from wininstance import has_running_instance
+from wininstance import show_running_window
 
 
 # OpenBLAS commits a buffer per core as numpy loads (750 MB on 32 threads)
@@ -41,6 +42,7 @@ def launch():
 def main():
     if has_running_instance():
         print('PyWinAudio is already running.')
+        show_running_window('PyWinAudio')
         return
     launch()
 
