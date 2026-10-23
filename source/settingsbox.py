@@ -59,8 +59,8 @@ class SettingsBox(wx.Panel):
         self.shortcut = ButtonCard(self, theme, 'Start menu',
                                    'Put a shortcut in the Start menu',
                                    'Create', self.on_shortcut)
-        self.cards = (self.ontop, self.tray, self.close_to_tray, self.dark, self.wide, self.status, self.devices, self.folder,
-                      self.unlink, self.shortcut)
+        self.cards = (self.ontop, self.tray, self.close_to_tray, self.dark, self.wide,
+                      self.status, self.devices, self.folder, self.unlink, self.shortcut)
 
         self.ontop.SetValue(settings.get('on_top', False))
         self.tray.SetValue(settings.get('tray_icon', True))
