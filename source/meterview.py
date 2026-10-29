@@ -47,6 +47,7 @@ from units import FOLDED
 from units import PAD
 from units import TIGHT_PAD
 from units import TIGHT_TOP
+from utilities import CONTROL_ACCENT
 from utilities import call_painted
 
 
@@ -865,7 +866,8 @@ class MeterView(wx.Panel):
     def paint(self, dc, width, height):
         key = (width, height, self.folded, self.pinned, self.flowing, self.left_margin,
                self.right_margin,
-               tuple(self.parts.values()), getattr(self, 'hover_target', None))
+               tuple(self.parts.values()), getattr(self, 'hover_target', None),
+               CONTROL_ACCENT['rack'])
         if self.background is None or self.background_key != key:
             self.background = self.build_background(width, height)
             self.background_key = key

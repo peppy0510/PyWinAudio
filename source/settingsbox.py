@@ -15,79 +15,76 @@ import wx
 import eapo
 
 from controls import ButtonCard
+from controls import ChoiceCard
 from controls import NoticeCard
+from controls import Panel
+from controls import ScrollArea
 from controls import SettingCard
 from shortcut import ShortCut
 from utilities import APP_NAME
-from utilities import get_font
 
 
-MARGIN = 16
-TITLE_INSET = 3
-TITLE_GAP = 8
-CARD_GAP = 4
-GROUP_GAP = 14
 CONFIRM_DELAY = 4000
+THEMES = (('auto', 'Auto'), ('light', 'Light'), ('dark', 'Dark'))
+ACCENTS = (('blue', 'Blue'), ('red', 'Red'))
 
 
-class SettingsBox(wx.Panel):
+class SettingsBox(ScrollArea):
 
-    def __init__(self, parent, theme, settings, on_change, on_unlink):
-        super().__init__(parent)
+    def __init__(self, parent, theme, settings, on_change, on_unlink, folds=None,
+                 on_fold=None):
+        super().__init__(parent, theme)
         self.on_unlink = on_unlink
         self.asking = None
-        self.ontop = SettingCard(self, theme, 'Always on top',
-                                 'Keep the window above others', on_change)
-        self.tray = SettingCard(self, theme, 'Tray icon',
-                                'Show an icon in the notification area', on_change)
-        self.close_to_tray = SettingCard(self, theme, 'Close to tray',
-                                         'Closing hides the window instead of quitting',
-                                         on_change)
-        self.dark = SettingCard(self, theme, 'Dark theme',
-                                'Use the dark colour scheme for the window', on_change)
-        self.wide = SettingCard(self, theme, 'Wide layout',
-                                'Lay the rack out in columns when the window is wide', on_change)
-        self.status = NoticeCard(self, theme, 'Equalizer APO', '')
-        self.devices = ButtonCard(self, theme, 'Devices',
-                                  'Pick the outputs Equalizer APO processes',
-                                  'Choose', self.on_devices)
-        self.folder = ButtonCard(self, theme, 'Config folder',
-                                 'Where the rack is written', 'Open', self.on_folder)
-        self.unlink = ButtonCard(self, theme, 'Unlink',
-                                 'Put the previous config.txt back', 'Unlink',
-                                 self.on_unlink_click)
-        self.shortcut = ButtonCard(self, theme, 'Start menu',
-                                   'Put a shortcut in the Start menu',
+        self.folds = folds if folds is not None else set()
+        self.on_folds = on_fold
+        board = self.content
+
+        def toggle(label, description):
+            return SettingCard(board, theme, label, description, on_change)
+
+        self.ontop = toggle('Always on top', 'Keep the window above others')
+        self.tray = toggle('Tray icon', 'Show an icon in the notification area')
+        self.close_to_tray = toggle('Close to tray',
+                                    'Closing hides the window instead of quitting')
+        self.theme_choice = ChoiceCard(board, theme, 'Theme', 'Auto follows Windows', THEMES,
+                                       on_change)
+        self.accent_choice = ChoiceCard(board, theme, 'Accent',
+                                        'Buttons on, the rack\'s keys and the menu', ACCENTS,
+                                        on_change)
+        self.wide = toggle('Wide layout', 'Lay the rack out in columns when the window is wide')
+        self.status = NoticeCard(board, theme, 'Equalizer APO', '')
+        self.devices = ButtonCard(board, theme, 'Devices',
+                                  'Pick the outputs Equalizer APO processes', 'Choose',
+                                  self.on_devices)
+        self.folder = ButtonCard(board, theme, 'Config folder', 'Where the rack is written',
+                                 'Open', self.on_folder)
+        self.unlink = ButtonCard(board, theme, 'Unlink', 'Put the previous config.txt back',
+                                 'Unlink', self.on_unlink_click)
+        self.unlink.set_captions('Unlink?')
+        self.shortcut = ButtonCard(board, theme, 'Start menu', 'Put a shortcut in the Start menu',
                                    'Create', self.on_shortcut)
-        self.cards = (self.ontop, self.tray, self.close_to_tray, self.dark, self.wide,
-                      self.status, self.devices, self.folder, self.unlink, self.shortcut)
 
         self.ontop.SetValue(settings.get('on_top', False))
         self.tray.SetValue(settings.get('tray_icon', True))
         self.close_to_tray.SetValue(settings.get('close_to_tray', False))
-        self.dark.SetValue(settings.get('theme', 'dark') == 'dark')
+        self.theme_choice.SetValue(settings.get('theme', 'dark'))
+        self.accent_choice.SetValue(settings.get('accent', 'blue'))
         self.wide.SetValue(settings.get('wide_layout', True))
 
-        self.groups = []
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.AddSpacer(MARGIN)
-        for title, cards in (('Window', (self.ontop, self.tray, self.close_to_tray, self.dark,
-                                         self.wide)),
-                             ('Equalizer APO', (self.status, self.devices, self.folder,
-                                                self.unlink)),
-                             ('Shortcut', (self.shortcut,))):
-            label = wx.StaticText(self, label=title)
-            label.SetFont(get_font(10, bold=True))
-            self.groups.append(label)
-            sizer.Add(label, 0, wx.LEFT, MARGIN + TITLE_INSET)
-            sizer.AddSpacer(TITLE_GAP)
-            for index, card in enumerate(cards):
-                if index:
-                    sizer.AddSpacer(CARD_GAP)
-                sizer.Add(card, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, MARGIN)
-            sizer.AddSpacer(GROUP_GAP)
-        sizer.AddStretchSpacer()
-        self.SetSizer(sizer)
+        self.set_panels([
+            Panel(board, theme, 'settings.window', 'Window',
+                  (self.ontop, self.tray, self.close_to_tray), self.folds, self.on_fold),
+            Panel(board, theme, 'settings.appearance', 'Appearance',
+                  (self.theme_choice, self.accent_choice, self.wide), self.folds,
+                  self.on_fold),
+            Panel(board, theme, 'settings.eapo', 'Equalizer APO',
+                  (self.status, self.devices, self.folder, self.unlink), self.folds,
+                  self.on_fold),
+            Panel(board, theme, 'settings.shortcut', 'Shortcut', (self.shortcut,), self.folds,
+                  self.on_fold),
+        ])
+        self.bind_children()
         self.apply_theme(theme)
         self.refresh_state()
 
@@ -137,7 +134,7 @@ class SettingsBox(wx.Panel):
             self.asking.Stop()
         self.asking = None
         self.unlink.set_caption('Unlink')
-        self.unlink.set_tone('dim')
+        self.unlink.set_tone('plain')
 
     def on_shortcut(self):
         try:
@@ -149,10 +146,14 @@ class SettingsBox(wx.Panel):
         self.shortcut.set_label('Start menu', 'Shortcut created')
         self.shortcut.set_tone('done')
 
+    def on_fold(self):
+        self.relayout_panels()
+        if self.on_folds:
+            self.on_folds()
+
     def apply_theme(self, theme):
-        self.SetBackgroundColour(wx.Colour(theme['bg']))
-        for label in self.groups:
-            label.SetForegroundColour(wx.Colour(theme['text']))
-        for card in self.cards:
-            card.set_theme(theme)
+        self.set_theme(theme)
+        for child in self.content.GetChildren():
+            if hasattr(child, 'set_theme'):
+                child.set_theme(theme)
         self.Refresh()

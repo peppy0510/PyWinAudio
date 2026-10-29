@@ -115,7 +115,7 @@ class MasterUnit:
             return 'Not linked. Link takes over config.txt and keeps a copy', RACK['warn']
         if not self.rack.power:
             return 'Switched off. Sound passes through untouched', RACK['dim']
-        return os.path.join(self.rack.folder, eapo.OWN_FILE), RACK['dim']
+        return 'ACTIVE', RACK['dim']
 
     def draw(self, gc):
         rect = self.rect

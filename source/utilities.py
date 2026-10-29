@@ -10,6 +10,7 @@ email: peppy0510@hotmail.com
 import asyncio
 import ctypes
 import json
+import math
 import os
 import threading
 import wx
@@ -19,7 +20,7 @@ from ctypes import wintypes
 
 APP_NAME = 'PyWinAudio'
 
-CARD_HEIGHT = 54
+CARD_HEIGHT = 50
 CARD_RADIUS = 6
 
 TITLEBAR_HEIGHT = 32
@@ -59,6 +60,17 @@ THEMES = {
         'text': '#e6e9ed',
         'dim': '#8b929b',
         'accent': '#4c9aff',
+        'control_accent': '#4c9aff',
+        'on_control_accent': '#101215',
+        'band': '#17181b',
+        'control_hover': '#2f3237',
+        'control_down': '#202226',
+        'edge': '#363940',
+        'on_accent': '#101215',
+        'thumb': '#c4c7cc',
+        'thumb_hover': '#e6e7e9',
+        'thumb_line': '#2a2d32',
+        'tick': '#6b727c',
         'control': '#26282d',
         'warn': '#ff9a3d',
         'done': '#4c9aff',
@@ -73,6 +85,17 @@ THEMES = {
         'text': '#1d2126',
         'dim': '#6b727c',
         'accent': '#2b6cb0',
+        'control_accent': '#2b6cb0',
+        'on_control_accent': '#ffffff',
+        'band': '#eef0f2',
+        'control_hover': '#e2e5ea',
+        'control_down': '#d8dce2',
+        'edge': '#c9ced5',
+        'on_accent': '#ffffff',
+        'thumb': '#5b626b',
+        'thumb_hover': '#3d434b',
+        'thumb_line': '#ffffff',
+        'tick': '#9aa1aa',
         'control': '#e8eaee',
         'warn': '#a2661f',
         'done': '#2b6cb0',
@@ -80,6 +103,23 @@ THEMES = {
         'titlebar_dark': False,
     },
 }
+
+# the controls' accent; the rack's own colours and 'accent'/'done' stay blue
+ACCENTS = {
+    'blue': {'dark': ('#4c9aff', '#101215'), 'light': ('#2b6cb0', '#ffffff')},
+    'red': {'dark': ('#ff6b6b', '#101215'), 'light': ('#c53030', '#ffffff')},
+}
+
+
+# the rack (always dark): the accent for its blue units' controls, None for their own
+CONTROL_ACCENT = {'rack': None}
+
+
+def apply_accent(name):
+    for theme_name, (accent, on_accent) in ACCENTS.get(name, ACCENTS['blue']).items():
+        THEMES[theme_name]['control_accent'] = accent
+        THEMES[theme_name]['on_control_accent'] = on_accent
+    CONTROL_ACCENT['rack'] = ACCENTS['red']['dark'][0] if name == 'red' else None
 
 
 class WindowRect(ctypes.Structure):
@@ -167,7 +207,6 @@ def enable_drop_target(window, on_drop):
 
     for child in window.GetChildren():
         enable_drop_target(child, on_drop)
-
 
 
 def paint_now(window):
@@ -297,10 +336,16 @@ def draw_card_rim(gc, colour, x, y, width, height, radius=CARD_RADIUS):
     gc.FillPath(path, wx.ODDEVEN_RULE)
 
 
+FONTS = {}
+
+
 def get_font(size, bold=False):
-    weight = wx.FONTWEIGHT_BOLD if bold else wx.FONTWEIGHT_NORMAL
-    return wx.Font(size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                   weight, faceName='Segoe UI')
+    key = (size, bold)
+    if key not in FONTS:
+        # wxPython 4.3 rejects float sizes in wx.Font()
+        info = wx.FontInfo(size).FaceName('Segoe UI')
+        FONTS[key] = wx.Font(info.Bold() if bold else info)
+    return FONTS[key]
 
 
 class Canvas(wx.Panel):
@@ -338,9 +383,171 @@ class Canvas(wx.Panel):
             text = text[:-1]
         return text + '…'
 
+    def draw_backdrop(self, gc):
+        parent = self.GetParent()
+        if not isinstance(parent, Canvas):
+            return
+        x, y = self.GetPosition()
+        width, height = parent.GetClientSize()
+        gc.PushState()
+        gc.Translate(-x, -y)
+        parent.draw(gc, width, height)
+        gc.PopState()
+
+    def draw_centered_text(self, gc, text, cx, y, font, colour):
+        gc.SetFont(font, wx.Colour(colour))
+        tw, th = gc.GetTextExtent(text)[:2]
+        gc.DrawText(text, cx - tw / 2, y)
+        return th
+
     def fit_tail(self, gc, text, limit):
         if gc.GetTextExtent(text)[0] <= limit:
             return text
         while text and gc.GetTextExtent('…' + text)[0] > limit:
             text = text[1:]
         return '…' + text
+
+
+ROUND_SIZE = 46
+PANEL_RADIUS = 3
+HEADER_BAND = 30
+PANEL_MARGIN = 8
+PANEL_GAP = 3
+PANEL_PAD = 14
+BUTTON_HEIGHT = 22
+BUTTON_PAD = 11
+BUTTON_GAP = 4
+BUTTON_FONT = 8.5
+BAND_INSET = (HEADER_BAND - BUTTON_HEIGHT) // 2
+
+INKS = {}
+
+WIDTHS = {}
+
+FONT_KEYS = {}
+
+
+def get_font_key(font):
+    # GetNativeFontInfoDesc builds a long string on every call; the font is kept so its id
+    # cannot be handed to another font
+    key = FONT_KEYS.get(id(font))
+    if key is None:
+        key = FONT_KEYS[id(font)] = (font, font.GetNativeFontInfoDesc())
+    return key[1]
+
+
+def get_luma(image, x, y):
+    # ClearType shifts each channel by a third of a pixel
+    return (image.GetRed(x, y) + image.GetGreen(x, y) + image.GetBlue(x, y)) / 3.0
+
+
+def get_ink(font):
+    key = get_font_key(font)
+    if key not in INKS:
+        bitmap = wx.Bitmap(80, 80, 24)
+        dc = wx.MemoryDC(bitmap)
+        dc.SetBackground(wx.BLACK_BRUSH)
+        dc.Clear()
+        gc = wx.GraphicsContext.Create(dc)
+        gc.SetFont(font, wx.WHITE)
+        gc.DrawText('H', 4, 0)
+        del gc
+        dc.SelectObject(wx.NullBitmap)
+        image = bitmap.ConvertToImage()
+        rows = [y for y in range(80) if any(get_luma(image, x, y) > 127 for x in range(80))]
+        INKS[key] = (rows[0], rows[-1]) if rows else (0, 0)
+    return INKS[key]
+
+
+def get_text_width(font, text):
+    key = (get_font_key(font), text)
+    if key not in WIDTHS:
+        dc = wx.MemoryDC(wx.Bitmap(1, 1))
+        gc = wx.GraphicsContext.Create(dc)
+        gc.SetFont(font, wx.BLACK)
+        WIDTHS[key] = int(math.ceil(gc.GetTextExtent(text)[0]))
+        del gc
+        dc.SelectObject(wx.NullBitmap)
+    return WIDTHS[key]
+
+
+SPANS = {}
+
+
+def get_ink_span(font, text, colour='#ffffff', back='#000000'):
+    # GDI+ extents pad the right side (2-3 px measured), so centre on the ink
+    key = (get_font_key(font), text, colour, back)
+    if key not in SPANS:
+        width = get_text_width(font, text) + 40
+        fore, ground = wx.Colour(colour), wx.Colour(back)
+        bitmap = wx.Bitmap(width, 60, 24)
+        dc = wx.MemoryDC(bitmap)
+        dc.SetBackground(wx.Brush(ground))
+        dc.Clear()
+        gc = wx.GraphicsContext.Create(dc)
+        gc.SetFont(font, fore)
+        gc.DrawText(text, 20, 10)
+        del gc
+        dc.SelectObject(wx.NullBitmap)
+        image = bitmap.ConvertToImage()
+        base = (ground.Red() + ground.Green() + ground.Blue()) / 3.0
+        limit = abs((fore.Red() + fore.Green() + fore.Blue()) / 3.0 - base) / 2.0
+        columns = [x for x in range(width)
+                   if any(abs(get_luma(image, x, y) - base) > limit for y in range(60))]
+        SPANS[key] = (columns[0] - 20, columns[-1] - 20) if columns else (0, 0)
+    return SPANS[key]
+
+
+def get_text_top(font, top, height):
+    ink_top, ink_bottom = get_ink(font)
+    return int(round(top + (height - (ink_bottom - ink_top + 1)) / 2.0 - ink_top))
+
+
+def draw_text_in(gc, text, rect, font, colour, align='center', back=None):
+    gc.SetFont(font, wx.Colour(colour))
+    width = get_text_width(font, text)
+    if back is None:
+        ink_left, ink_right = get_ink_span(font, text)
+    else:
+        ink_left, ink_right = get_ink_span(font, text, colour, back)
+    if align == 'center':
+        x = int(round(rect.x + (rect.width - (ink_right - ink_left + 1)) / 2.0 - ink_left))
+    elif align == 'right':
+        x = rect.x + rect.width - 1 - ink_right
+    else:
+        x = rect.x - ink_left
+    gc.DrawText(text, x, get_text_top(font, rect.y, rect.height))
+    return width
+
+
+def fill_rect(gc, colour, x, y, width, height, radius=0):
+    gc.SetPen(wx.TRANSPARENT_PEN)
+    gc.SetBrush(wx.Brush(wx.Colour(colour)))
+    if radius:
+        gc.DrawRoundedRectangle(x, y, width, height, radius)
+    else:
+        gc.DrawRectangle(x, y, width, height)
+
+
+def draw_frame(gc, colour, x, y, width, height):
+    fill_rect(gc, colour, x, y, width, 1)
+    fill_rect(gc, colour, x, y + height - 1, width, 1)
+    fill_rect(gc, colour, x, y, 1, height)
+    fill_rect(gc, colour, x + width - 1, y, 1, height)
+
+
+def draw_chevron(gc, name, cx, cy, size, colour):
+    gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(colour)).Width(1.5)
+                           .Cap(wx.CAP_ROUND).Join(wx.JOIN_ROUND)))
+    gc.SetBrush(wx.TRANSPARENT_BRUSH)
+    half = size / 2
+    path = gc.CreatePath()
+    if name == 'down':
+        path.MoveToPoint(cx - half * 0.7, cy - half * 0.35)
+        path.AddLineToPoint(cx, cy + half * 0.35)
+        path.AddLineToPoint(cx + half * 0.7, cy - half * 0.35)
+    else:
+        path.MoveToPoint(cx - half * 0.35, cy - half * 0.7)
+        path.AddLineToPoint(cx + half * 0.35, cy)
+        path.AddLineToPoint(cx - half * 0.35, cy + half * 0.7)
+    gc.StrokePath(path)

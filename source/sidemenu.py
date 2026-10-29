@@ -193,7 +193,7 @@ class SideMenu(Canvas):
 
         if active:
             bar = rect.height * 0.40
-            gc.SetBrush(wx.Brush(wx.Colour(theme['accent'])))
+            gc.SetBrush(wx.Brush(wx.Colour(theme['control_accent'])))
             gc.DrawRoundedRectangle(rect.x + 2, rect.y + (rect.height - bar) / 2,
                                     3, bar, 1.5)
 

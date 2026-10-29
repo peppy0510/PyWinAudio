@@ -22,6 +22,7 @@ from rackui import draw_text
 from rackui import draw_title
 from rackui import fill_rect
 from rackui import fit_text
+from rackui import get_control_tone
 from rackui import get_pen
 from rackui import mix
 from rackui import set_font
@@ -134,7 +135,8 @@ class ChannelFader(Control):
         volume = self.channel.get_volume()
         fill_rect(gc, RACK['track'], cx - 1, rect.y, 2, rect.height, 1)
         y = self.to_y(volume)
-        fill_rect(gc, self.accent, cx - 1, y, 2, rect.y + rect.height - y, 1)
+        fill = mix(get_control_tone(self.accent), '#000000', 0.25)
+        fill_rect(gc, fill, cx - 1, y, 2, rect.y + rect.height - y, 1)
         for db in FADER_MARKS:
             ty = round(self.to_y(10 ** (db / 20)))
             fill_rect(gc, RACK['faint'], cx - 6, ty, 4, 1)
@@ -153,9 +155,7 @@ class Column:
     def __init__(self, unit, channel, master):
         self.channel = channel
         self.master = master
-        accent = FACES['master'][1] if master else LOW
-        self.fader = ChannelFader(channel, mix(accent, '#000000', 0.25).GetAsString(
-            wx.C2S_HTML_SYNTAX))
+        self.fader = ChannelFader(channel, FACES['master'][1] if master else LOW)
         self.fader.on_move = unit.repaint
         self.mute = Button('M', self.toggle_mute, active=lambda: self.channel.get_mute())
         self.mute.tip = 'Mute ' + channel.name
@@ -349,7 +349,8 @@ class MixerUnit:
         rect, channel = column.rect, column.channel
         fill_rect(gc, RACK['band'], rect.x, rect.y, rect.width, rect.height)
         if column.master:
-            fill_rect(gc, self.accent, rect.x + 6, rect.y, rect.width - 12, 2, 1)
+            fill_rect(gc, get_control_tone(self.accent), rect.x + 6, rect.y, rect.width - 12, 2,
+                      1)
         icon = self.get_icon(channel.icon) if channel.icon else None
         x, y = rect.x + 7, rect.y + 9
         if icon is not None:
@@ -423,7 +424,7 @@ class MixerUnit:
         return meter.y + meter.height * (1.0 - ratio)
 
     def draw_speaker(self, gc, cx, cy, master, scale=1.0):
-        colour = self.accent if master else RACK['dim']
+        colour = get_control_tone(self.accent) if master else RACK['dim']
         gc.PushState()
         gc.Translate(cx, cy)
         gc.Scale(scale, scale)

@@ -10,6 +10,7 @@ email: peppy0510@hotmail.com
 import math
 import wx
 
+from utilities import CONTROL_ACCENT
 from utilities import mix
 
 
@@ -173,7 +174,7 @@ def draw_faceplate(gc, x, y, width, height, face, ear, accent=None):
         fill_rect(gc, RACK['band'], x, y + band - 3, width, 3)
         fill_rect(gc, RACK['line'], x, y + HEADER_BAND, width, 1)
     if accent:
-        fill_rect(gc, accent, x, y + 6, 2, band - 12, 1)
+        fill_rect(gc, get_control_tone(accent), x, y + 6, 2, band - 12, 1)
 
 
 def draw_title(gc, left, y, title, subtitle, tone, limit):
@@ -194,6 +195,16 @@ CHIP_PAD = 6
 CHIP_GAP = 4
 CHIP_TEXT = 6.5
 CHIP_LIT = FACES['master'][1]
+# the blue units' colours: the accent chosen in their place on their controls
+BLUE_FACES = {FACES[kind][1].lower() for kind in ('master', 'parametric', 'graphic',
+                                                  'automaster')}
+
+
+def get_control_tone(accent):
+    override = CONTROL_ACCENT['rack']
+    if override and isinstance(accent, str) and accent.lower() in BLUE_FACES:
+        return override
+    return accent
 
 
 def get_chip_width(gc, text):
@@ -216,7 +227,7 @@ def get_fill(lit, hovered, pressed, accent):
 
 
 def draw_chip(gc, rect, text, lit, hovered=False):
-    fill = get_fill(lit, hovered, False, CHIP_LIT)
+    fill = get_fill(lit, hovered, False, get_control_tone(CHIP_LIT))
     gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
     gc.SetBrush(wx.Brush(fill))
     gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
@@ -388,6 +399,7 @@ class Knob(Control):
         return reach
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         rect = self.rect
         cx = rect.x + rect.width / 2
         radius = min(rect.width / 2 - 4, KNOB_RADIUS)
@@ -472,6 +484,7 @@ class Switch(Control):
         self.on_click()
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         rect = self.rect
         cx = rect.x + rect.width / 2
         label, size = fit_label(gc, self.label, rect.width - 2)
@@ -541,6 +554,7 @@ class Fader(Control):
         self.put(self.default)
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         rect = self.rect
         cx = rect.x + rect.width / 2
         top, bottom = self.get_slot()
@@ -598,6 +612,7 @@ class Button(Control):
     on_reset = None
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         rect = self.rect
         lit = self.active() if self.active else False
         if not self.enabled:
@@ -650,6 +665,7 @@ class IconButton(Button):
         self.tip = tip
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         rect = self.rect
         asking = self.asking is not None
         if asking:
@@ -683,6 +699,7 @@ class Power(Control):
         self.put(not self.get())
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         rect = self.rect
         if self.pressed or self.hovered:
             box = wx.Rect(rect).Inflate(2, 2)
@@ -743,6 +760,7 @@ class Segment(Control):
         return changed
 
     def draw(self, gc, accent):
+        accent = get_control_tone(accent)
         current = self.get() if self.enabled else None
         for index, (cell, (value, caption)) in enumerate(zip(self.get_cells(), self.options)):
             lit = value == current

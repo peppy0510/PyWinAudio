@@ -8,6 +8,7 @@ email: peppy0510@hotmail.com
 
 
 import os
+import winreg
 import wx
 
 import eapo
@@ -24,6 +25,7 @@ from titlebar import TitleBar
 from tray import TrayIcon
 from utilities import APP_NAME
 from utilities import THEMES
+from utilities import apply_accent
 from utilities import apply_clip_siblings
 from utilities import apply_no_caption
 from utilities import apply_titlebar_theme
@@ -50,6 +52,17 @@ MIN_VISIBLE_HEIGHT = 32
 MENU_ITEMS = (('Rack', 'rack'), None, ('Settings', 'settings'))
 
 
+def is_windows_dark():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize')
+        value, _ = winreg.QueryValueEx(key, 'AppsUseLightTheme')
+        winreg.CloseKey(key)
+        return value == 0
+    except OSError:
+        return True
+
+
 class MainFrame(wx.Frame):
 
     stored_rect = None
@@ -68,7 +81,9 @@ class MainFrame(wx.Frame):
         apply_no_caption(self)
         self.SetMinSize(wx.Size(*MIN_SIZE))
 
-        self.theme_name = settings.get('theme', 'dark')
+        self.accent_name = settings.get('accent', 'blue')
+        apply_accent(self.accent_name)
+        self.theme_name = self.resolve_theme(settings.get('theme', 'dark'))
         theme = THEMES[self.theme_name]
 
         self.set_icon()
@@ -94,8 +109,9 @@ class MainFrame(wx.Frame):
         self.rack.on_scroll = self.place_meters
         self.rack.analyzer = self.meters
         self.rackpage.Bind(wx.EVT_SIZE, lambda event: (self.place_rackpage(), event.Skip()))
+        self.settings_folds = set(settings.get('settings_folded', []))
         self.settingsbox = SettingsBox(self.book, theme, settings, self.on_settings,
-                                       self.on_unlink)
+                                       self.on_unlink, self.settings_folds, self.store_settings)
         for page in (self.rackpage, self.settingsbox):
             self.book.AddPage(page, '')
 
@@ -293,6 +309,12 @@ class MainFrame(wx.Frame):
             return
         event.Skip()
 
+    @staticmethod
+    def resolve_theme(choice):
+        if choice == 'auto':
+            return 'dark' if is_windows_dark() else 'light'
+        return choice if choice in THEMES else 'dark'
+
     def on_settings(self):
         style = self.GetWindowStyle()
         if self.settingsbox.ontop.GetValue():
@@ -303,9 +325,12 @@ class MainFrame(wx.Frame):
             self.rack.set_wide(self.settingsbox.wide.GetValue())
             self.place_rackpage()
 
-        theme_name = 'dark' if self.settingsbox.dark.GetValue() else 'light'
-        if theme_name != self.theme_name:
+        theme_name = self.resolve_theme(self.settingsbox.theme_choice.GetValue())
+        accent_name = self.settingsbox.accent_choice.GetValue()
+        if theme_name != self.theme_name or accent_name != self.accent_name:
             self.theme_name = theme_name
+            self.accent_name = accent_name
+            apply_accent(self.accent_name)
             self.apply_theme()
         if self.settingsbox.tray.GetValue() and self.tray is None:
             self.tray = TrayIcon(self)
@@ -358,7 +383,10 @@ class MainFrame(wx.Frame):
 
     def flush_settings(self):
         settings = {
-            'theme': self.theme_name,
+            # the choice, 'auto' too, not the theme it resolved to
+            'theme': self.settingsbox.theme_choice.GetValue(),
+            'accent': self.accent_name,
+            'settings_folded': sorted(self.settings_folds),
             'on_top': self.settingsbox.ontop.GetValue(),
             'tray_icon': self.settingsbox.tray.GetValue(),
             'close_to_tray': self.settingsbox.close_to_tray.GetValue(),
