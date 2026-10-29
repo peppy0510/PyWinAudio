@@ -17,7 +17,7 @@ import winreg
 
 OWN_FILE = 'pywinaudio.txt'
 BACKUP_FILE = 'config-before-pywinaudio.txt'
-INCLUDE_LINE = 'Include: %s' % OWN_FILE
+INCLUDE_LINE = f'Include: {OWN_FILE}'
 
 # tests swap in a scratch config folder
 OVERRIDE = 'PYWINAUDIO_CONFIG'
@@ -143,8 +143,8 @@ def link(folder):
     # rack file first, or the engine looks for a missing file meanwhile (measured)
     write_rack(folder, units)
     write_text(path, '\n'.join([
-        '# PyWinAudio writes the rack into %s.' % OWN_FILE,
-        '# The lines that were here before are kept in %s.' % BACKUP_FILE,
+        f'# PyWinAudio writes the rack into {OWN_FILE}.',
+        f'# The lines that were here before are kept in {BACKUP_FILE}.',
         INCLUDE_LINE, '']))
     return units
 
@@ -173,12 +173,12 @@ GRAPHIC_FREQUENCIES = (25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 40
 
 
 def get_number(value):
-    text = ('%.4f' % value).rstrip('0').rstrip('.')
+    text = f'{value:.4f}'.rstrip('0').rstrip('.')
     return '0' if text in ('-0', '') else text
 
 
 def quote(token):
-    return '"%s"' % token if re.search(r'\s', token) or not token else token
+    return f'"{token}"' if re.search(r'\s', token) or not token else token
 
 
 def render_band(band):
@@ -209,30 +209,30 @@ def render_mix(target, pair):
     for gain, channel in zip(pair, ('L', 'R')):
         if abs(gain) < 1e-6:
             continue
-        terms.append(channel if abs(gain - 1) < 1e-6 else '%s*%s' % (get_number(gain), channel))
-    return '%s=%s' % (target, '+'.join(terms) if terms else '0')
+        terms.append(channel if abs(gain - 1) < 1e-6 else f'{get_number(gain)}*{channel}')
+    return f'{target}={"+".join(terms) if terms else "0"}'
 
 
 def render_unit(unit):
     kind = unit['kind']
     if kind == 'preamp':
-        return ['Preamp: %s dB' % get_number(unit['gain'])]
+        return [f'Preamp: {get_number(unit["gain"])} dB']
     if kind == 'parametric':
         return [render_band(band) for band in unit['bands'] if band.get('on', True)]
     if kind == 'graphic':
         pairs = zip(unit.get('freqs', GRAPHIC_FREQUENCIES), unit['gains'])
-        return ['GraphicEQ: ' + '; '.join('%s %s' % (get_number(freq), get_number(gain))
+        return ['GraphicEQ: ' + '; '.join(f'{get_number(freq)} {get_number(gain)}'
                                           for freq, gain in pairs)]
     if kind == 'delay':
-        lines = ['Delay: %s ms' % get_number(unit['ms'])]
+        lines = [f'Delay: {get_number(unit["ms"])} ms']
         if unit.get('channel', 'all') != 'all':
-            lines = ['Channel: %s' % unit['channel']] + lines + ['Channel: all']
+            lines = [f'Channel: {unit["channel"]}'] + lines + ['Channel: all']
         return lines
     if kind == 'stereo':
         left, right = get_stereo_matrix(unit)
         if left == (1, 0) and right == (0, 1):
             return []
-        return ['Copy: %s %s' % (render_mix('L', left), render_mix('R', right))]
+        return [f'Copy: {render_mix("L", left)} {render_mix("R", right)}']
     if kind == 'vst':
         if not unit.get('path'):
             return []
@@ -264,7 +264,7 @@ def render(units, power=True):
         if body:
             lines.append('')
             label = unit.get('title') or (unit.get('name') if unit['kind'] == 'vst' else None)
-            lines.append('# %s' % (label or LABELS.get(unit['kind'], unit['kind'])))
+            lines.append(f'# {label or LABELS.get(unit["kind"], unit["kind"])}')
             lines.extend(body)
     return '\n'.join(lines) + '\n'
 

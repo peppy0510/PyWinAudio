@@ -39,7 +39,7 @@ def get_file_description(path):
         import win32api
         translations = win32api.GetFileVersionInfo(path, '\\VarFileInfo\\Translation')
         language, codepage = translations[0]
-        key = '\\StringFileInfo\\%04x%04x\\FileDescription' % (language, codepage)
+        key = f'\\StringFileInfo\\{language:04x}{codepage:04x}\\FileDescription'
         return (win32api.GetFileVersionInfo(path, key) or '').strip()
     except Exception:
         return ''
@@ -180,7 +180,7 @@ class Mixer:
             from pycaw.pycaw import IAudioSessionManager2
             from pycaw.pycaw import IMMDeviceEnumerator
         except Exception as error:
-            self.error = 'pycaw is not installed (%s)' % error
+            self.error = f'pycaw is not installed ({error})'
             return
         try:
             if self.enumerator is None:

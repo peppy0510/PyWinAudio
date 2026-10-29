@@ -371,7 +371,7 @@ class EqScreen(Control):
         for gain in (-12, -6, 6, 12):
             y = round(self.to_y(gain)) + 0.5
             gc.StrokeLine(inner.x, y, inner.x + inner.width, y)
-            draw_text(gc, '%+d' % gain, inner.x - 4, y - 6, 7, RACK['lcd_text'],
+            draw_text(gc, f'{int(gain):+d}', inner.x - 4, y - 6, 7, RACK['lcd_text'],
                       align='right')
         gc.SetPen(get_pen(gc, RACK['lcd_axis'], 1))
         y = round(self.to_y(0)) + 0.5
@@ -458,14 +458,14 @@ class ParametricUnit(Unit):
                          ends=('-18', '+18'))
         self.q = Knob('Q', lambda: self.get_value('q', 1.0),
                       lambda value: self.put_value('q', round(value, 2)),
-                      0.1, 10.0, 0.71, lambda value: '%.2f' % value, log=True,
+                      0.1, 10.0, 0.71, lambda value: f'{value:.2f}', log=True,
                       ends=('.1', '10'))
         self.extras = [self.screen, self.previous, self.next, self.add, self.drop,
                        self.band_power, self.kind, self.freq, self.gain, self.q]
 
     def get_subtitle(self):
         count = len(self.data['bands'])
-        return '%d band%s' % (count, '' if count == 1 else 's')
+        return f'{count} band{"" if count == 1 else "s"}'
 
     def get_band(self):
         bands = self.data['bands']
@@ -570,7 +570,7 @@ class ParametricUnit(Unit):
     def draw_body(self, gc):
         x, y = self.band_label
         count = len(self.data['bands'])
-        text = 'BAND %d / %d' % (self.data.get('selected', 0) + 1, count) if count else 'NO BANDS'
+        text = f'BAND {int(self.data.get("selected", 0) + 1)} / {count}' if count else 'NO BANDS'
         draw_text(gc, text, x, y, 8, RACK['text'], bold=True, align='center', engraved=True)
 
 
@@ -597,8 +597,8 @@ class GraphicUnit(Unit):
     def get_subtitle(self):
         count = len(self.data['freqs'])
         if self.faders:
-            return '%d bands' % count
-        return '%d points, imported' % count
+            return f'{count} bands'
+        return f'{count} points, imported'
 
     def put_gain(self, index, value):
         self.data['gains'][index] = round(value, 1)
@@ -661,7 +661,7 @@ class GraphicUnit(Unit):
             y = fader.to_y(gain)
             fill_rect(gc, '#000000' if gain else RACK['faint'], self.scale.x + 20, y,
                       self.body.width - 20, 1)
-            draw_text(gc, '%+d' % gain if gain else '0', self.scale.x + 17, y - 6, 7,
+            draw_text(gc, f'{int(gain):+d}' if gain else '0', self.scale.x + 17, y - 6, 7,
                       RACK['dim'], align='right', engraved=True)
 
 
@@ -669,15 +669,15 @@ class DelayUnit(Unit):
 
     def build(self):
         self.time = Knob('TIME', lambda: self.data['ms'], self.put_time, 0.0, 300.0, 0.0,
-                         lambda value: '%.1f ms' % value, step=0.1, ends=('0', '300'))
+                         lambda value: f'{value:.1f} ms', step=0.1, ends=('0', '300'))
         self.channel = Segment((('all', 'Both'), ('L', 'Left'), ('R', 'Right')),
                                lambda: self.data.get('channel', 'all'), self.put_channel)
         self.extras = [self.time, self.channel]
 
     def get_subtitle(self):
         channel = self.data.get('channel', 'all')
-        return 'Both channels' if channel == 'all' else '%s channel only' % (
-            'Left' if channel == 'L' else 'Right')
+        return 'Both channels' if channel == 'all' else (f'{"Left" if channel == "L" else "Right"} '
+                                                         'channel only')
 
     def put_time(self, value):
         self.data['ms'] = round(value, 1)
@@ -696,11 +696,11 @@ class DelayUnit(Unit):
 def get_balance_text(value):
     if abs(value) < 0.005:
         return 'Center'
-    return '%s %d%%' % ('R' if value > 0 else 'L', round(abs(value) * 100))
+    return f'{"R" if value > 0 else "L"} {round(abs(value) * 100)}%'
 
 
 def get_width_text(value):
-    return 'Mono' if value < 0.005 else '%d%%' % round(value * 100)
+    return 'Mono' if value < 0.005 else f'{round(value * 100)}%'
 
 
 class StereoUnit(Unit):
@@ -844,11 +844,11 @@ class VstUnit(Unit):
 
     def get_display(self, index, value):
         if self.plugin is not None:
-            return '%s %s' % (self.plugin.get_display(index), self.plugin.get_label(index))
+            return f'{self.plugin.get_display(index)} {self.plugin.get_label(index)}'
         display = self.data.get('display') or []
         if index < len(display) and display[index]:
             return display[index]
-        return '%d%%' % round(value * 100)
+        return f'{round(value * 100)}%'
 
     def ensure_plugin(self):
         if self.plugin is not None:
@@ -886,7 +886,7 @@ class VstUnit(Unit):
             return False
         params = [[plugin.get_name(index), round(plugin.get_value(index), 6)]
                   for index in range(plugin.count)]
-        display = ['%s %s' % (plugin.get_display(index), plugin.get_label(index))
+        display = [f'{plugin.get_display(index)} {plugin.get_label(index)}'
                    for index in range(plugin.count)]
         properties = [plugin.get_properties(index) for index in range(plugin.count)]
         self.data['has_editor'] = plugin.has_editor
@@ -912,8 +912,8 @@ class VstUnit(Unit):
             # plugins may refuse a value or move others with it; read everything back
             self.read_state()
             if abs(self.data['params'][index][1] - value) > 0.01:
-                self.show_notice('%s: held by the plugin (another setting limits it)' %
-                                 self.get_short_name(self.data['params'][index][0]))
+                self.show_notice(f'{self.get_short_name(self.data["params"][index][0])}: held by '
+                                 'the plugin (another setting limits it)')
         self.changed()
 
     def on_edit(self):
@@ -1034,11 +1034,11 @@ class VstUnit(Unit):
             elif fill and value <= low:
                 text = 'off'
             elif key == 'phase':
-                delay = '' if abs(value) < 0.05 else '%+.1f ms' % value
+                delay = '' if abs(value) < 0.05 else f'{value:+.1f} ms'
                 text = ('INV ' + delay).strip() if values.get('phase_flip') else (delay or 'OK')
             else:
                 shown = 0.0 if abs(value) < 0.05 else value  # no '-0.0'
-                text = '%+.1f dB' % shown if bipolar else '%.1f dB' % min(0.0, shown)
+                text = f'{shown:+.1f} dB' if bipolar else f'{min(0.0, shown):.1f} dB'
             draw_text(gc, text, x + width, top, 7, RACK['text'] if value is not None else
                       RACK['faint'], align='right')
             bar = wx.Rect(int(x), top + 17, int(width), 5)
@@ -1087,7 +1087,7 @@ class VstUnit(Unit):
         added = 10 ** (info['fill'] / 10) if info['fill'] > -100 else 0.0
         out = 10 * math.log10(have + added) if have + added > 1e-12 else -120.0
         to_x = lambda db: bar.x + bar.width * (min(max(db, low), high) - low) / (high - low)
-        draw_text(gc, '%.1f dB' % out if out > low else 'mono', x + width, top, 7, RACK['text'], align='right')
+        draw_text(gc, f'{out:.1f} dB' if out > low else 'mono', x + width, top, 7, RACK['text'], align='right')
         start, middle, end = bar.x, to_x(info['in']), to_x(out)
         if middle - start >= 1:
             fill_rect(gc, mix(self.accent, RACK['track'], 0.55), start, bar.y, middle - start, bar.height, 2)
@@ -1234,7 +1234,7 @@ class CustomUnit(Unit):
 
     def get_subtitle(self):
         count = len(self.data.get('lines', ()))
-        return '%d line%s kept as written' % (count, '' if count == 1 else 's')
+        return f'{count} line{"" if count == 1 else "s"} kept as written'
 
     def draw_body(self, gc):
         body = self.body
@@ -1248,7 +1248,7 @@ class CustomUnit(Unit):
             y += 16
         if len(lines) > 3:
             gc.SetFont(get_font(8), wx.Colour(RACK['faint']))
-            gc.DrawText('+%d more' % (len(lines) - 3), body.x, y)
+            gc.DrawText(f'+{len(lines) - 3} more', body.x, y)
 
 
 UNIT_CLASSES = {

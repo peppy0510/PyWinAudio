@@ -104,7 +104,7 @@ class Capture:
         try:
             import soundcard
         except Exception as error:
-            self.error = 'Could not load soundcard (%s)' % error
+            self.error = f'Could not load soundcard ({error})'
             return
         result = ctypes.windll.ole32.CoInitializeEx(None, COINIT_MULTITHREADED)
         try:

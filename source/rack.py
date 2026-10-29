@@ -124,7 +124,7 @@ class MasterUnit:
         right = self.text_right
         if self.rack.state == 'linked' and self.rack.power:
             boost = self.rack.get_peak_boost() + self.rack.get_preamp()
-            text = 'EQ BOOST %s' % get_db_text(boost)
+            text = f'EQ BOOST {get_db_text(boost)}'
             width = draw_text(gc, text, right, rect.y + FOLDED / 2 - 6, 8, RACK['dim'],
                               align='right', engraved=True)[0]
             right -= width + 16
@@ -244,7 +244,7 @@ class RemoveConfirm:
         limit = max(0, self.cancel.rect.x - left - 16)
         middle = rect.y + rect.height / 2
         set_font(gc, 10.5, RACK['text'], bold=True)
-        title = fit_text(gc, 'Remove %s?' % self.unit.get_title().upper(), limit)
+        title = fit_text(gc, f'Remove {self.unit.get_title().upper()}?', limit)
         draw_text(gc, title, left, middle - 17, 10.5, RACK['text'], bold=True)
         set_font(gc, 8, RACK['dim'])
         draw_text(gc, fit_text(gc, 'Its settings go with it', limit), left, middle + 2, 8,

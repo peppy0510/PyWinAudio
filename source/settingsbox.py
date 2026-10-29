@@ -97,7 +97,7 @@ class SettingsBox(ScrollArea):
             self.status.set_label('Equalizer APO', 'Installed, not linked yet. Link it from the rack')
             self.status.set_tone('warn')
         else:
-            self.status.set_label('Equalizer APO', 'Linked, the rack is in %s' % eapo.OWN_FILE)
+            self.status.set_label('Equalizer APO', f'Linked, the rack is in {eapo.OWN_FILE}')
             self.status.set_tone('done')
         self.devices.set_enabled(eapo.get_device_selector() is not None)
         self.folder.set_enabled(folder is not None)

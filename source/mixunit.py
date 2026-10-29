@@ -325,7 +325,7 @@ class MixerUnit:
         if self.mixer.error:
             return self.mixer.error
         count = len(self.mixer.channels)
-        return '%d program%s' % (count, '' if count == 1 else 's')
+        return f'{count} program{"" if count == 1 else "s"}'
 
     def draw(self, gc):
         rect = self.rect
@@ -374,7 +374,7 @@ class MixerUnit:
 
         muted = channel.get_mute()
         volume = channel.get_volume()
-        value = '-inf' if volume <= 1e-6 else '%.1f' % (20 * math.log10(min(volume, 1.0)))
+        value = '-inf' if volume <= 1e-6 else f'{20 * math.log10(min(volume, 1.0)):.1f}'
         x, middle = column.value
         draw_text(gc, value, x, middle - 5, 7, RACK['warn'] if muted else RACK['text'], bold=True)
         column.mute.draw(gc, RACK['warn'])

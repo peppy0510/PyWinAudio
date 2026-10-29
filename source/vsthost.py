@@ -170,7 +170,7 @@ class Plugin:
             if cookie is not None:
                 cookie.close()
         if not self.module:
-            raise VstError('Could not load the library (error %d)' % ctypes.get_last_error())
+            raise VstError(f'Could not load the library (error {ctypes.get_last_error()})')
 
         address = None
         for name in (b'VSTPluginMain', b'main'):

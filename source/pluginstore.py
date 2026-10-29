@@ -90,9 +90,9 @@ def get_latest(family, name):
 
 def get_free_folder(folder):
     index = 2
-    while os.path.isdir('%s-%d' % (folder, index)):
+    while os.path.isdir(f'{folder}-{index}'):
         index += 1
-    return '%s-%d' % (folder, index)
+    return f'{folder}-{index}'
 
 
 def is_stored(path):

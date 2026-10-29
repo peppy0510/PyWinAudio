@@ -785,19 +785,19 @@ class Segment(Control):
 
 
 def get_db_text(value):
-    return '%+.1f dB' % value if abs(value) >= 0.05 else '0.0 dB'
+    return f'{value:+.1f} dB' if abs(value) >= 0.05 else '0.0 dB'
 
 
 def get_hz_text(value):
     if value >= 10000:
-        return '%.1f kHz' % (value / 1000)
+        return f'{value / 1000:.1f} kHz'
     if value >= 1000:
-        return '%.2f kHz' % (value / 1000)
-    return '%d Hz' % round(value)
+        return f'{value / 1000:.2f} kHz'
+    return f'{round(value)} Hz'
 
 
 def get_short_hz(value):
     if value >= 1000:
-        text = ('%.1f' % (value / 1000)).rstrip('0').rstrip('.')
+        text = f'{value / 1000:.1f}'.rstrip('0').rstrip('.')
         return text + 'k'
-    return '%d' % round(value)
+    return f'{round(value)}'

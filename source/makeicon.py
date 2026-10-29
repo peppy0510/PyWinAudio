@@ -65,7 +65,7 @@ def main():
 
     bitmap.SaveFile(os.path.join(path, 'icon.png'), wx.BITMAP_TYPE_PNG)
     bitmap.SaveFile(os.path.join(path, 'icon.ico'), wx.BITMAP_TYPE_ICO)
-    print('[ ICON CREATED ] [ {} ]'.format(os.path.join(path, 'icon.ico')))
+    print(f'[ ICON CREATED ] [ {os.path.join(path, "icon.ico")} ]')
 
 
 if __name__ == '__main__':

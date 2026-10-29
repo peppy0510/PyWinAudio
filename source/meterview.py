@@ -1046,7 +1046,7 @@ class MeterView(wx.Panel):
         dc.SetFont(font)
         for key, box in regions['boxes'].items():
             value, floor = values[key]
-            text = '--' if value <= floor else '%.1f' % value
+            text = '--' if value <= floor else f'{value:.1f}'
             if key.endswith('pk'):
                 colour = CLIP if value > -0.1 else RACK['text']
             elif key.endswith('rms'):
@@ -1058,7 +1058,7 @@ class MeterView(wx.Panel):
             dc.DrawText(text, box.x + box.width - width, box.y + (box.height - height) // 2)
 
     def format_db(self, value):
-        return '-inf' if value <= FLOOR else '%.1f' % value
+        return '-inf' if value <= FLOOR else f'{value:.1f}'
 
     def draw_spectrum(self, dc):
         self.draw_bars(dc)
@@ -1108,8 +1108,8 @@ class MeterView(wx.Panel):
         db = float(numpy.interp(x, xs, values))
         note = NOTE_NAMES[round(12 * math.log2(freq / 440.0) + 69) % 12]
         octave = (round(12 * math.log2(freq / 440.0) + 69)) // 12 - 1
-        hz = '%.0f Hz' % freq if freq < 1000 else '%.2f kHz' % (freq / 1000)
-        text = '%s  %s%d  %.1f dB' % (hz, note, octave, db)
+        hz = f'{freq:.0f} Hz' if freq < 1000 else f'{freq / 1000:.2f} kHz'
+        text = f'{hz}  {note}{octave}  {db:.1f} dB'
         dc.SetPen(wx.Pen(wx.Colour(RACK['lcd_axis']), 1))
         dc.DrawLine(x, inner.y, x, inner.y + inner.height)
         dc.SetFont(get_mono(7.5))
@@ -1138,10 +1138,10 @@ class MeterView(wx.Panel):
         dc.SetFont(get_mono(7.5))
         for key, ratio, value, tone in (
                 ('correlation', (self.correlation + 1) / 2,
-                 '%+.2f' % self.correlation if abs(self.correlation) >= 0.005 else '0.00',
+                 f'{self.correlation:+.2f}' if abs(self.correlation) >= 0.005 else '0.00',
                  METER_BLUE if self.correlation >= 0 else METER_MID),
                 ('balance', 0.5 + max(-1.0, min(1.0, self.balance / BALANCE_RANGE)) / 2,
-                 '%+.1f' % -self.balance if abs(self.balance) >= 0.05 else '0.0', METER_BLUE)):
+                 f'{-self.balance:+.1f}' if abs(self.balance) >= 0.05 else '0.0', METER_BLUE)):
             bar = regions[key]
             xs = regions['phase_segments']
             centre = regions['phase_middle']
