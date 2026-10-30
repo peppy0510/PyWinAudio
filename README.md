@@ -11,6 +11,10 @@
 * Auto, dark and light themes, with a blue or red accent.
 * A tray icon with Close to tray; the analyzer pauses while hidden.
 
+## Screenshot
+
+![screenshot](/assets/images/screenshot-001.png)
+
 ## How to install
 
 * Install Equalizer APO first.
