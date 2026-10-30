@@ -2,11 +2,13 @@
 
 * Hardware style rack for Equalizer APO. Sound passes through the devices from top to bottom.
 * Preamp, parametric EQ, graphic EQ, delay, stereo, Auto Master and VST2 plugins.
+* Auto Master's Loudness and Stereo chips turn a whole stage off and back on, keeping the switches that were on.
 * Analyzer with meters, spectrum, scope and spectrogram.
 * Mixer for the output and app volumes.
 * Every change is written to Equalizer APO's config, so the rack keeps working after the app is closed.
 * Link imports the current config.txt, and Unlink puts it back.
-* Dark and light themes.
+* The rack lays out in columns when the window is wide.
+* Auto, dark and light themes, with a blue or red accent.
 * A tray icon with Close to tray; the analyzer pauses while hidden.
 
 ## How to install
