@@ -1271,6 +1271,9 @@ class AutoMasterUnit(VstUnit):
     DEPENDS = {'Target': 'AGC', 'Max Gain': 'AGC', 'Speed': 'AGC', 'Max Width': 'Width Limit',
                'Wide Target': 'Mono Wide', 'Air': 'Mono Wide', 'Ceiling': 'Limiter',
                'Drive': 'Limiter', 'Smooth': 'Limiter', 'Attack': 'Limiter'}
+    # header chip -> the switches it turns off together; turning back on restores those that were on
+    STAGES = {'Loudness': ('AGC', 'Limiter'),
+              'Stereo': ('Balance', 'Phase Fix', 'Width Limit', 'Bass Mono', 'Mono Wide')}
 
     def __init__(self, data, rack):
         self.rename_params(data)
@@ -1321,15 +1324,23 @@ class AutoMasterUnit(VstUnit):
         self.controls_button = Chip('Controls', lambda: self.toggle_part('show_controls'),
                                     lambda: self.data.get('show_controls', True),
                                     tip='Show or hide the detailed settings')
+        self.stage_buttons = [
+            Chip('Loudness', lambda: self.toggle_stage('Loudness'),
+                 lambda: self.is_stage_on('Loudness'), tip='Turn AGC and the limiter on or off'),
+            Chip('Stereo', lambda: self.toggle_stage('Stereo'),
+                 lambda: self.is_stage_on('Stereo'),
+                 tip='Turn balance, width and mono fill on or off')]
         # bypass goes through shared memory: instant, and never saved
         self.bypass_button = Chip('Bypass', self.toggle_bypass, self.is_bypassed,
                                   tip='Compare with the original at the same loudness (A/B)')
-        self.chips = [self.meters_button, self.controls_button, self.bypass_button]
+        self.chips = [self.meters_button, self.controls_button] + self.stage_buttons + [
+            self.bypass_button]
+        self.shown_chips = self.chips
         self.extras = []
         self.subtitle_left = None
 
     def get_controls(self):
-        return super().get_controls() + self.chips
+        return super().get_controls() + self.shown_chips
 
     def layout(self, gc, rect):
         super().layout(gc, rect)
@@ -1337,7 +1348,14 @@ class AutoMasterUnit(VstUnit):
         set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
         x = left + gc.GetTextExtent(self.get_title().upper())[0] + 14
         middle = rect.y + FOLDED // 2
-        for chip in self.chips:
+        # Meters and Controls change nothing while folded; a narrow plate drops them first
+        chips = self.chips[2:] if self.folded else self.chips
+        widths = [get_chip_width(gc, chip.caption) for chip in chips]
+        while len(chips) > len(self.chips) - 2 and (
+                x + sum(widths) + CHIP_GAP * (len(chips) - 1) > self.header_right):
+            chips, widths = chips[1:], widths[1:]
+        self.shown_chips = chips
+        for chip in chips:
             width = get_chip_width(gc, chip.caption)
             chip.rect = wx.Rect(int(x), middle - CHIP_HEIGHT // 2, width, CHIP_HEIGHT)
             x += width + CHIP_GAP
@@ -1356,6 +1374,42 @@ class AutoMasterUnit(VstUnit):
             limit = max(0, self.header_right - self.subtitle_left)
             draw_text(gc, fit_text(gc, subtitle, limit), self.subtitle_left,
                       self.rect.y + HEADER_BAND / 2 - 6, 8, tone, engraved=True)
+
+    def get_stage_switches(self, stage):
+        names = [item[0] for item in self.data.get('params', ())]
+        return [names.index(name) for name in self.STAGES[stage] if name in names]
+
+    def is_stage_on(self, stage):
+        return any(self.data['params'][index][1] >= 0.5 for index in self.get_stage_switches(stage))
+
+    def toggle_stage(self, stage):
+        switches = self.get_stage_switches(stage)
+        if not switches:
+            return
+        params = self.data['params']
+        remembered = self.data.setdefault('stages', {})
+        if self.is_stage_on(stage):
+            remembered[stage] = [params[index][0] for index in switches if params[index][1] >= 0.5]
+            wanted = []
+        else:
+            wanted = remembered.pop(stage, None) or self.STAGES[stage]
+        plugin = self.ensure_plugin()
+        for index in switches:
+            value = 1.0 if params[index][0] in wanted else 0.0
+            params[index][1] = value
+            if plugin is not None and index < plugin.count:
+                plugin.set_value(index, value)
+        if plugin is not None:
+            self.read_state()
+        self.changed()
+
+    def put_param(self, index, value):
+        # a switch set by hand makes the remembered set stale
+        name = self.data['params'][index][0]
+        for stage, names in self.STAGES.items():
+            if name in names:
+                self.data.get('stages', {}).pop(stage, None)
+        super().put_param(index, value)
 
     def toggle_part(self, key):
         other = 'show_controls' if key == 'show_meters' else 'show_meters'
