@@ -10,10 +10,12 @@ email: peppy0510@hotmail.com
 import ctypes
 import makeshortcut
 import os
+import subprocess
 import wx
 
 import eapo
 
+from controls import AboutCard
 from controls import ButtonCard
 from controls import ChoiceCard
 from controls import NoticeCard
@@ -21,7 +23,12 @@ from controls import Panel
 from controls import ScrollArea
 from controls import SettingCard
 from shortcut import ShortCut
+from utilities import APP_AUTHOR
+from utilities import APP_EMAIL
+from utilities import APP_HOME
 from utilities import APP_NAME
+from utilities import APP_VERSION
+from utilities import get_asset_path
 
 
 CONFIRM_DELAY = 4000
@@ -83,6 +90,11 @@ class SettingsBox(ScrollArea):
                   self.on_fold),
             Panel(board, theme, 'settings.shortcut', 'Shortcut', (self.shortcut,), self.folds,
                   self.on_fold),
+            Panel(board, theme, 'settings.about', 'About',
+                  (AboutCard(board, theme, f'{APP_NAME} {APP_VERSION}',
+                             (APP_AUTHOR, APP_EMAIL), 'GitHub', self.on_home,
+                             wx.Image(get_asset_path('icon', 'muteklab.png'))),),
+                  self.folds, self.on_fold),
         ])
         self.bind_children()
         self.apply_theme(theme)
@@ -145,6 +157,10 @@ class SettingsBox(ScrollArea):
             return
         self.shortcut.set_label('Start menu', 'Shortcut created')
         self.shortcut.set_tone('done')
+
+    def on_home(self):
+        # explorer hands the link to the shell, so the browser does not inherit elevation
+        subprocess.Popen(['explorer', APP_HOME])
 
     def on_fold(self):
         self.relayout_panels()
