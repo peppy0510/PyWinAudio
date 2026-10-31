@@ -23,7 +23,6 @@ from rackui import CHIP_GAP
 from rackui import CHIP_HEIGHT
 from rackui import Chip
 from rackui import TITLE_SIZE
-from rackui import get_chip_width
 from rackui import Control
 from rackui import Fader
 from rackui import IconButton
@@ -1088,11 +1087,19 @@ class VstUnit(Unit):
         out = 10 * math.log10(have + added) if have + added > 1e-12 else -120.0
         to_x = lambda db: bar.x + bar.width * (min(max(db, low), high) - low) / (high - low)
         draw_text(gc, f'{out:.1f} dB' if out > low else 'mono', x + width, top, 7, RACK['text'], align='right')
-        start, middle, end = bar.x, to_x(info['in']), to_x(out)
-        if middle - start >= 1:
-            fill_rect(gc, mix(self.accent, RACK['track'], 0.55), start, bar.y, middle - start, bar.height, 2)
-        if end - middle >= 1:
+        # a whole-pixel joint, so the two parts meet without an antialiased seam
+        start, middle, end = bar.x, round(to_x(info['in'])), to_x(out)
+        has_in, has_fill = middle - start >= 1, end - middle >= 1
+        dim = mix(self.accent, RACK['track'], 0.55)
+        if has_in:
+            fill_rect(gc, dim, start, bar.y, middle - start, bar.height, 2)
+        if has_fill:
             fill_rect(gc, self.accent, middle, bar.y, end - middle, bar.height, 2)
+        # round corners where the parts meet leave a notch: square them off
+        if has_in and has_fill:
+            fill_rect(gc, dim, middle - min(2, middle - start), bar.y, min(2, middle - start),
+                      bar.height)
+            fill_rect(gc, self.accent, middle, bar.y, min(2, end - middle), bar.height)
         fill_rect(gc, RACK['text'], to_x(info['target']), bar.y - 2, 1, bar.height + 4)
 
     # resizes the editor window only
@@ -1320,19 +1327,21 @@ class AutoMasterUnit(VstUnit):
                 self.knobs[index].inactive = lambda at=at: self.data['params'][at][1] < 0.5
         self.meters_button = Chip('Meters', lambda: self.toggle_part('show_meters'),
                                   lambda: self.data.get('show_meters', True),
-                                  tip='Show or hide the meters')
+                                  tip='Show or hide the meters', glyph='meters')
         self.controls_button = Chip('Controls', lambda: self.toggle_part('show_controls'),
                                     lambda: self.data.get('show_controls', True),
-                                    tip='Show or hide the detailed settings')
+                                    tip='Show or hide the detailed settings', glyph='controls')
         self.stage_buttons = [
             Chip('Loudness', lambda: self.toggle_stage('Loudness'),
-                 lambda: self.is_stage_on('Loudness'), tip='Turn AGC and the limiter on or off'),
+                 lambda: self.is_stage_on('Loudness'), tip='Turn AGC and the limiter on or off',
+                 glyph='loudness'),
             Chip('Stereo', lambda: self.toggle_stage('Stereo'),
                  lambda: self.is_stage_on('Stereo'),
-                 tip='Turn balance, width and mono fill on or off')]
+                 tip='Turn balance, width and mono fill on or off', glyph='stereo')]
         # bypass goes through shared memory: instant, and never saved
         self.bypass_button = Chip('Bypass', self.toggle_bypass, self.is_bypassed,
-                                  tip='Compare with the original at the same loudness (A/B)')
+                                  tip='Compare with the original at the same loudness (A/B)',
+                                  glyph='bypass')
         self.chips = [self.meters_button, self.controls_button] + self.stage_buttons + [
             self.bypass_button]
         self.shown_chips = self.chips
@@ -1348,15 +1357,11 @@ class AutoMasterUnit(VstUnit):
         set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
         x = left + gc.GetTextExtent(self.get_title().upper())[0] + 14
         middle = rect.y + FOLDED // 2
-        # Meters and Controls change nothing while folded; a narrow plate drops them first
+        # Meters and Controls change nothing while folded
         chips = self.chips[2:] if self.folded else self.chips
-        widths = [get_chip_width(gc, chip.caption) for chip in chips]
-        while len(chips) > len(self.chips) - 2 and (
-                x + sum(widths) + CHIP_GAP * (len(chips) - 1) > self.header_right):
-            chips, widths = chips[1:], widths[1:]
         self.shown_chips = chips
         for chip in chips:
-            width = get_chip_width(gc, chip.caption)
+            width = chip.get_width(gc)
             chip.rect = wx.Rect(int(x), middle - CHIP_HEIGHT // 2, width, CHIP_HEIGHT)
             x += width + CHIP_GAP
         self.subtitle_left = x - CHIP_GAP + 12
@@ -1372,8 +1377,11 @@ class AutoMasterUnit(VstUnit):
             tone = self.get_subtitle_tone()
             set_font(gc, 8, tone)
             limit = max(0, self.header_right - self.subtitle_left)
-            draw_text(gc, fit_text(gc, subtitle, limit), self.subtitle_left,
-                      self.rect.y + HEADER_BAND / 2 - 6, 8, tone, engraved=True)
+            subtitle = fit_text(gc, subtitle, limit)
+            # a lone ellipsis says nothing
+            if subtitle != '…':
+                draw_text(gc, subtitle, self.subtitle_left,
+                          self.rect.y + HEADER_BAND / 2 - 6, 8, tone, engraved=True)
 
     def get_stage_switches(self, stage):
         names = [item[0] for item in self.data.get('params', ())]

@@ -186,7 +186,8 @@ def draw_title(gc, left, y, title, subtitle, tone, limit):
     if subtitle:
         set_font(gc, 8, tone)
         subtitle = fit_text(gc, subtitle, max(0, limit - width - 12))
-        draw_text(gc, subtitle, left + width + 12, middle - 6, 8, tone, engraved=True)
+        if subtitle != '…':
+            draw_text(gc, subtitle, left + width + 12, middle - 6, 8, tone, engraved=True)
     return width
 
 
@@ -226,13 +227,76 @@ def get_fill(lit, hovered, pressed, accent):
     return wx.Colour(RACK['button'])
 
 
-def draw_chip(gc, rect, text, lit, hovered=False):
+def draw_chip_face(gc, rect, lit, hovered):
     fill = get_fill(lit, hovered, False, get_control_tone(CHIP_LIT))
     gc.SetPen(get_pen(gc, fill if lit else RACK['button_edge'], 1))
     gc.SetBrush(wx.Brush(fill))
     gc.DrawRoundedRectangle(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1, 3)
+    return '#101215' if lit else RACK['dim']
+
+
+def draw_chip(gc, rect, text, lit, hovered=False):
+    colour = draw_chip_face(gc, rect, lit, hovered)
     draw_text(gc, text.upper(), rect.x + rect.width / 2, rect.y + rect.height / 2 - 5.5, CHIP_TEXT,
-              '#101215' if lit else RACK['dim'], bold=True, align='center')
+              colour, bold=True, align='center')
+
+
+ICON_CHIP = 18
+
+
+def stroke_points(gc, cx, cy, points, close=False):
+    path = gc.CreatePath()
+    path.MoveToPoint(cx + points[0][0], cy + points[0][1])
+    for x, y in points[1:]:
+        path.AddLineToPoint(cx + x, cy + y)
+    if close:
+        path.CloseSubpath()
+    gc.StrokePath(path)
+
+
+# one stroke weight and about a 10 x 9 box each, so no icon outweighs the others
+def draw_chip_glyph(gc, name, cx, cy, colour):
+    pen = get_pen(gc, colour, 1.3, cap=wx.CAP_ROUND, join=wx.JOIN_ROUND)
+    gc.SetPen(pen)
+    gc.SetBrush(wx.TRANSPARENT_BRUSH)
+    if name == 'meters':
+        for index, height in enumerate((5, 9, 7)):
+            x = cx - 3.5 + index * 3.5
+            gc.StrokeLine(x, cy + 4.5 - height, x, cy + 4.5)
+    elif name == 'controls':
+        gc.StrokeLine(cx - 5, cy - 2.5, cx + 5, cy - 2.5)
+        gc.StrokeLine(cx - 5, cy + 2.5, cx + 5, cy + 2.5)
+        gc.SetBrush(wx.Brush(wx.Colour(colour)))
+        gc.DrawEllipse(cx - 3.7, cy - 4.2, 3.4, 3.4)
+        gc.DrawEllipse(cx + 0.3, cy + 0.8, 3.4, 3.4)
+    elif name == 'loudness':
+        stroke_points(gc, cx, cy, ((-5, 4), (5, 4), (5, -4.5)), close=True)
+    elif name == 'stereo':
+        gc.DrawEllipse(cx - 5.5, cy - 3.3, 6.6, 6.6)
+        gc.DrawEllipse(cx - 1.1, cy - 3.3, 6.6, 6.6)
+    elif name == 'spectrum':
+        stroke_points(gc, cx, cy, ((-5, 4), (-3, -1), (-0.5, 1), (2, -4), (5, 2)))
+    elif name == 'scope':
+        stroke_points(gc, cx, cy, [(x / 2 - 5, -3.5 * math.sin(x / 20 * 2 * math.pi))
+                                   for x in range(21)])
+    elif name == 'spectrogram':
+        for y, start, end in ((-3.5, -5, 1), (0, -2, 5), (3.5, -5, 3)):
+            gc.StrokeLine(cx + start, cy + y, cx + end, cy + y)
+    elif name == 'pin':
+        stroke_points(gc, cx, cy, ((-2, -4.5), (2, -4.5), (2, -1), (4, 1.5), (-4, 1.5), (-2, -1)),
+                      close=True)
+        gc.StrokeLine(cx, cy + 1.5, cx, cy + 5)
+    elif name == 'bypass':
+        # the signal jumps over the unit
+        gc.DrawRectangle(cx - 2, cy + 0.5, 4, 4)
+        gc.StrokeLine(cx - 6, cy + 2.5, cx - 2, cy + 2.5)
+        gc.StrokeLine(cx + 2, cy + 2.5, cx + 6, cy + 2.5)
+        stroke_points(gc, cx, cy, ((-4, 2.5), (-4, -3.5), (4, -3.5), (4, 2.5)))
+
+
+def draw_icon_chip(gc, rect, glyph, lit, hovered=False):
+    colour = draw_chip_face(gc, rect, lit, hovered)
+    draw_chip_glyph(gc, glyph, rect.x + rect.width / 2, rect.y + rect.height / 2, colour)
 
 
 def draw_led(gc, cx, cy, on, colour, radius=5.5, off=None):
@@ -634,12 +698,17 @@ class Button(Control):
 
 class Chip(Control):
 
-    def __init__(self, caption, action, active, tip=''):
+    def __init__(self, caption, action, active, tip='', glyph=None):
         super().__init__()
         self.caption = caption
         self.action = action
         self.active = active
-        self.tip = tip
+        # an icon chip has no words on it, so its tip carries the name
+        self.tip = f'{caption}: {tip}' if glyph and tip else tip
+        self.glyph = glyph
+
+    def get_width(self, gc):
+        return ICON_CHIP if self.glyph else get_chip_width(gc, self.caption)
 
     # toggles on press; a double click counts once
     def on_down(self, point, shift):
@@ -652,7 +721,10 @@ class Chip(Control):
         pass
 
     def draw(self, gc, accent):
-        draw_chip(gc, self.rect, self.caption, self.active(), self.hovered)
+        if self.glyph:
+            draw_icon_chip(gc, self.rect, self.glyph, self.active(), self.hovered)
+        else:
+            draw_chip(gc, self.rect, self.caption, self.active(), self.hovered)
 
 
 class IconButton(Button):

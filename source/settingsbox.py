@@ -54,6 +54,7 @@ class SettingsBox(ScrollArea):
         self.tray = toggle('Tray icon', 'Show an icon in the notification area')
         self.close_to_tray = toggle('Close to tray',
                                     'Closing hides the window instead of quitting')
+        self.autohide = toggle('Auto hide menu', 'Show the header only on hover')
         self.theme_choice = ChoiceCard(board, theme, 'Theme', 'Auto follows Windows', THEMES,
                                        on_change)
         self.accent_choice = ChoiceCard(board, theme, 'Accent',
@@ -75,13 +76,14 @@ class SettingsBox(ScrollArea):
         self.ontop.SetValue(settings.get('on_top', False))
         self.tray.SetValue(settings.get('tray_icon', True))
         self.close_to_tray.SetValue(settings.get('close_to_tray', False))
+        self.autohide.SetValue(settings.get('auto_hide_menu', False))
         self.theme_choice.SetValue(settings.get('theme', 'dark'))
         self.accent_choice.SetValue(settings.get('accent', 'blue'))
         self.wide.SetValue(settings.get('wide_layout', True))
 
         self.set_panels([
             Panel(board, theme, 'settings.window', 'Window',
-                  (self.ontop, self.tray, self.close_to_tray), self.folds, self.on_fold),
+                  (self.ontop, self.tray, self.close_to_tray, self.autohide), self.folds, self.on_fold),
             Panel(board, theme, 'settings.appearance', 'Appearance',
                   (self.theme_choice, self.accent_choice, self.wide), self.folds,
                   self.on_fold),

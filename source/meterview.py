@@ -36,11 +36,9 @@ from rackui import get_short_hz
 from rackui import mix
 from rackui import draw_glyph
 from rackui import CHIP_GAP
+from rackui import ICON_CHIP
 from rackui import CHIP_HEIGHT
-from rackui import CHIP_PAD
-from rackui import CHIP_TEXT
-from rackui import draw_chip
-from rackui import get_chip_width
+from rackui import draw_icon_chip
 from units import EAR
 from units import FOLD
 from units import FOLDED
@@ -56,13 +54,10 @@ FPS = 30
 MARGIN = 8
 PARTS = ('level', 'spectrum', 'oscilloscope', 'spectrogram')
 TITLE = 'Analyzer'
-PART_LABELS = {'level': 'METERS', 'spectrum': 'SPECTRUM', 'oscilloscope': 'SCOPE',
-               'spectrogram': 'SPECTROGRAM'}
-SHORT_LABELS = {'level': 'METERS', 'spectrum': 'SPEC', 'oscilloscope': 'SCOPE', 'spectrogram': 'GRAM'}
+PART_GLYPHS = {'level': 'meters', 'spectrum': 'spectrum', 'oscilloscope': 'scope',
+               'spectrogram': 'spectrogram'}
 PART_BODIES = {'level': 118, 'spectrum': 118, 'oscilloscope': 118, 'spectrogram': 118}
 LCD_PAD = 8
-PIN = 18
-PIN_WIDTH = 30
 
 FLOOR = -60.0
 PEAK_FALL = 24.0
@@ -289,7 +284,6 @@ class MeterView(wx.Panel):
         self.scope_source = None
         self.spectrum_bins = None
         self.extents = {}
-        self.chip_widths = {}
         self.lock = threading.Lock()
         self.geometry = {}
         self.wanted = False
@@ -436,13 +430,6 @@ class MeterView(wx.Panel):
         self.background_key = None
         event.Skip()
 
-    def get_chip_width(self, text):
-        # a DC measures 1 px off from the GC that draws the chip
-        if text not in self.chip_widths:
-            dc = wx.MemoryDC(wx.Bitmap(1, 1))
-            self.chip_widths[text] = get_chip_width(wx.GraphicsContext.Create(dc), text)
-        return self.chip_widths[text]
-
     def layout(self, width):
         plate = wx.Rect(self.left_margin, self.get_top(),
                         width - self.left_margin - self.right_margin,
@@ -452,20 +439,16 @@ class MeterView(wx.Panel):
         middle = plate.y + FOLDED // 2
         regions = {'plate': plate, 'fold': wx.Rect(left - 5, middle - FOLD // 2, FOLD, FOLD),
                    'icon': wx.Rect(left + FOLD, middle - 7, 14, 14),
-                   'pin': wx.Rect(plate.x + plate.width - TIGHT_PAD - 1 - PIN_WIDTH, middle - PIN // 2, PIN_WIDTH, PIN),
+                   'pin': wx.Rect(plate.x + plate.width - TIGHT_PAD - 1 - ICON_CHIP,
+                                  middle - CHIP_HEIGHT // 2, ICON_CHIP, CHIP_HEIGHT),
                    'clips': [], 'chips': {}}
         dc = wx.ScreenDC()
         dc.SetFont(get_font(TITLE_SIZE, bold=True))
         start = left + FOLD + 22 + dc.GetTextExtent(TITLE.upper())[0] + 14
-        for labels in (PART_LABELS, SHORT_LABELS):
-            x = start
-            for name in PARTS:
-                chip = self.get_chip_width(labels[name])
-                regions['chips'][name] = wx.Rect(x, middle - CHIP_HEIGHT // 2, chip, CHIP_HEIGHT)
-                x += chip + CHIP_GAP
-            regions['chip_labels'] = labels
-            if x - CHIP_GAP <= regions['pin'].x - 8:
-                break
+        x = start
+        for name in PARTS:
+            regions['chips'][name] = wx.Rect(x, middle - CHIP_HEIGHT // 2, ICON_CHIP, CHIP_HEIGHT)
+            x += ICON_CHIP + CHIP_GAP
         regions['chips_end'] = x - CHIP_GAP
         self.regions = regions
         shown = [name for name in PARTS if not self.parts[name]]
@@ -606,8 +589,8 @@ class MeterView(wx.Panel):
         self.draw_pin(gc, regions['pin'], accent)
         draw_title(gc, power.x + 22, plate.y, TITLE, '', RACK['dim'], plate.width // 2)
         for name, chip in regions['chips'].items():
-            draw_chip(gc, chip, regions['chip_labels'][name], not self.parts[name],
-                      hover == 'part:' + name)
+            draw_icon_chip(gc, chip, PART_GLYPHS[name], not self.parts[name],
+                           hover == 'part:' + name)
         if 'screen' in regions:
             draw_lcd(gc, regions['screen'])
             for divider in regions['dividers']:
@@ -665,7 +648,7 @@ class MeterView(wx.Panel):
             fill_rect(gc, accent, rect.x + 2 + index * 4, bottom - height, 2, height, 1)
 
     def draw_pin(self, gc, rect, accent):
-        draw_chip(gc, rect, 'PIN', self.pinned, getattr(self, 'hover_target', None) == 'pin')
+        draw_icon_chip(gc, rect, 'pin', self.pinned, getattr(self, 'hover_target', None) == 'pin')
 
 
     def draw_level_ground(self, gc, regions):
@@ -1509,10 +1492,10 @@ class MeterView(wx.Panel):
         tip = {'clip': 'Click to reset',
                'integrated': 'Integrated loudness. Click to start over',
                'fold': 'Unfold to analyze' if self.folded else 'Fold to stop analyzing',
-               'part:level': 'Show or hide the level meter, vectorscope, spectrum bars, correlation and balance',
-               'part:spectrum': 'Show or hide the spectrum',
-               'part:oscilloscope': 'Show or hide the oscilloscope (same time axis as the spectrogram)',
-               'part:spectrogram': 'Show or hide the spectrogram',
+               'part:level': 'Meters: Show or hide the level meter, vectorscope, spectrum bars, correlation and balance',
+               'part:spectrum': 'Spectrum: Show or hide the spectrum',
+               'part:oscilloscope': 'Scope: Show or hide the oscilloscope (same time axis as the spectrogram)',
+               'part:spectrogram': 'Spectrogram: Show or hide the spectrogram',
                               'pin': 'Scroll with the rack' if self.pinned else 'Pin to the top'}.get(target, '')
         if tip != (self.GetToolTipText() or ''):
             self.SetToolTip(tip or None)

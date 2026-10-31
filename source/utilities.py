@@ -159,6 +159,31 @@ def apply_titlebar_theme(window, theme):
         window.SetSize(width, height)
 
 
+def get_tooltip_windows():
+    found = []
+    buffer = ctypes.create_unicode_buffer(64)
+
+    def visit(handle, _):
+        ctypes.windll.user32.GetClassNameW(handle, buffer, 64)
+        if buffer.value == 'tooltips_class32':
+            found.append(handle)
+        return True
+
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+    ctypes.windll.user32.EnumThreadWindows(ctypes.windll.kernel32.GetCurrentThreadId(), proc, 0)
+    return found
+
+
+def apply_tooltip_theme(window, theme):
+    # wx shares one native tooltip window that keeps the light system look unless told
+    if not get_tooltip_windows():
+        window.SetToolTip(' ')
+        window.UnsetToolTip()
+    name = 'DarkMode_Explorer' if theme['titlebar_dark'] else 'Explorer'
+    for handle in get_tooltip_windows():
+        ctypes.windll.uxtheme.SetWindowTheme(wintypes.HWND(handle), name, None)
+
+
 def apply_no_caption(window):
     # wxWidgets 3.3 keeps WS_CAPTION even when wxCAPTION is left out
     try:

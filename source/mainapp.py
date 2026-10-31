@@ -29,6 +29,7 @@ from utilities import apply_accent
 from utilities import apply_clip_siblings
 from utilities import apply_no_caption
 from utilities import apply_titlebar_theme
+from utilities import apply_tooltip_theme
 from utilities import cancel_job
 from utilities import finish_jobs
 from utilities import get_asset_path
@@ -42,7 +43,7 @@ HOVER_INTERVAL = 120
 SAVE_DELAY = 600
 WRITE_DELAY = 120
 DEFAULT_SIZE = (860, 900)
-MIN_SIZE = (400, 480)
+MIN_SIZE = (360, 480)
 
 FRAME_STYLE = wx.DEFAULT_FRAME_STYLE & ~wx.CAPTION
 
@@ -244,6 +245,7 @@ class MainFrame(wx.Frame):
         self.sidemenu.set_theme(theme)
         self.settingsbox.apply_theme(theme)
         apply_titlebar_theme(self, theme)
+        apply_tooltip_theme(self, theme)
         self.Refresh()
 
     def on_menu(self):
@@ -373,6 +375,11 @@ class MainFrame(wx.Frame):
     def on_tick(self, event):
         # the drawer also closes on its own (outside click, Esc, lost capture)
         self.titlebar.set_menu_open(self.sidemenu.is_open())
+        visible = (not self.settingsbox.autohide.GetValue() or
+                   self.book.GetCurrentPage() is self.settingsbox or
+                   self.sidemenu.is_open() or
+                   self.GetScreenRect().Contains(wx.GetMousePosition()))
+        self.titlebar.set_visible(visible)
 
     def store_settings(self):
         if not self.ready:
@@ -390,6 +397,7 @@ class MainFrame(wx.Frame):
             'on_top': self.settingsbox.ontop.GetValue(),
             'tray_icon': self.settingsbox.tray.GetValue(),
             'close_to_tray': self.settingsbox.close_to_tray.GetValue(),
+            'auto_hide_menu': self.settingsbox.autohide.GetValue(),
             'wide_layout': self.settingsbox.wide.GetValue(),
             'rect': self.stored_rect,
             'power': self.rack.power,
