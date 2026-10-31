@@ -13,7 +13,7 @@
 
 ## Screenshot
 
-![screenshot](/assets/images/screenshot-001.png)
+![screenshot](/assets/images/screenshot-8d618a10.webp)
 
 ## How to install
 
