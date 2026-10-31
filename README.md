@@ -17,7 +17,7 @@
 
 ## How to install
 
-* Install Equalizer APO first.
+* Install [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) first.
 * Just download and install the latest release. It puts Auto Master in place too.
 * Alternatively, if you like to build your own, download or clone a repository, build Auto Master with plugin/build.cmd (Visual Studio 2022), then execute makebuild.py. Python 3.x, Python packages in the requirements.pip file, PyInstaller and Inno Setup are required.
 * To run from the source, install Python packages in the requirements.pip file, then execute source/main.pyw with pythonw.exe. Auto Master is built from the plugin folder (plugin/build.cmd, then plugin/install.ps1).
