@@ -20,6 +20,10 @@ def get_pythonw():
 
 
 def create(path):
+    if hasattr(sys, 'frozen'):
+        ShortCut.create(path, target_path=sys.executable,
+                        working_directory=os.path.dirname(sys.executable), icon=sys.executable)
+        return path
     source = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(source)
     icon = os.path.join(root, 'assets', 'icon', 'icon.ico')

@@ -1,5 +1,7 @@
 numpy
+pillow
 pycaw
+pyinstaller
 pywin32
 soundcard
 wxpython

@@ -12,6 +12,7 @@ import ctypes
 import json
 import math
 import os
+import sys
 import threading
 import wx
 
@@ -309,6 +310,8 @@ def finish_jobs(timeout=2.0):
 
 
 def get_asset_path(*parts):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, 'assets', *parts)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(root, 'assets', *parts)
 
