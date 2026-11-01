@@ -42,7 +42,7 @@ from utilities import save_settings
 HOVER_INTERVAL = 120
 SAVE_DELAY = 600
 WRITE_DELAY = 120
-DEFAULT_SIZE = (860, 900)
+DEFAULT_SIZE = (480, 720)
 MIN_SIZE = (360, 480)
 
 FRAME_STYLE = wx.DEFAULT_FRAME_STYLE & ~wx.CAPTION
@@ -263,6 +263,7 @@ class MainFrame(wx.Frame):
             self.writer.Stop()
         self.writer = wx.CallLater(WRITE_DELAY, self.write_rack)
         self.store_settings()
+        self.update_tray()
 
     def write_rack(self):
         if self.rack.state != 'linked':
@@ -336,6 +337,7 @@ class MainFrame(wx.Frame):
             self.apply_theme()
         if self.settingsbox.tray.GetValue() and self.tray is None:
             self.tray = TrayIcon(self)
+            self.update_tray()
         elif not self.settingsbox.tray.GetValue() and self.tray is not None:
             self.remove_tray()
         self.store_settings()
@@ -355,6 +357,31 @@ class MainFrame(wx.Frame):
         self.Show()
         self.Raise()
         self.SetFocus()
+
+    def hide_window(self):
+        if self.restore_bounds is not None:
+            self.stored_rect = list(self.restore_bounds)
+        elif self.IsIconized() is False and self.IsMaximized() is False:
+            self.stored_rect = list(self.GetRect())
+        self.flush_settings()
+        # a second launch may have shown the window behind wx's back
+        self.Show(True)
+        self.Hide()
+
+    def get_tray_items(self):
+        folder = self.settingsbox.on_folder if eapo.get_config_path() else None
+        return [('Rack power', lambda: self.rack.set_power(not self.rack.power), self.rack.power),
+                ('Open config folder', folder)]
+
+    def update_tray(self):
+        if self.tray is None:
+            return
+        if self.rack.state == 'missing':
+            self.tray.set_tip('Equalizer APO not installed')
+        elif self.rack.state == 'unlinked':
+            self.tray.set_tip('Rack not linked')
+        else:
+            self.tray.set_tip('Rack on' if self.rack.power else 'Rack off, sound passes through')
 
     def on_size(self, event):
         self.sidemenu.place(TitleBar.HEIGHT)
@@ -413,14 +440,7 @@ class MainFrame(wx.Frame):
         if (self.tray is not None and self.settingsbox.close_to_tray.GetValue()
                 and not self.quitting and event.CanVeto()):
             event.Veto()
-            if self.restore_bounds is not None:
-                self.stored_rect = list(self.restore_bounds)
-            elif self.IsIconized() is False and self.IsMaximized() is False:
-                self.stored_rect = list(self.GetRect())
-            self.flush_settings()
-            # a second launch may have shown the window behind wx's back
-            self.Show(True)
-            self.Hide()
+            self.hide_window()
             return
         self.timer.Stop()
         self.sizing.Stop()
