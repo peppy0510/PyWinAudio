@@ -189,6 +189,7 @@ class MixerUnit:
         self.data = data
         self.mixer = Mixer()
         self.columns = []
+        self.shown = []
         self.levels = {}
         self.recent = {}
         self.smooth = {}
@@ -215,8 +216,6 @@ class MixerUnit:
         self.rack.on_unit_change(None)
 
     def refresh(self):
-        before = [(column.channel.key, column.channel.name, column.channel.active)
-                  for column in self.columns]
         self.mixer.refresh()
         channels = ([self.mixer.master] if self.mixer.master is not None else []) + \
             list(self.mixer.channels)
@@ -230,9 +229,13 @@ class MixerUnit:
                 column.adopt(channel)
             columns.append(column)
         self.columns = columns
-        after = [(column.channel.key, column.channel.name, column.channel.active)
+        # compare with what was last drawn: mute and volume also change from the Windows tray
+        shown = [(column.channel.key, column.channel.name, column.channel.active,
+                  column.channel.get_mute(), round(column.channel.get_volume(), 3))
                  for column in self.columns]
-        return before != after
+        changed = shown != self.shown
+        self.shown = shown
+        return changed
 
     def update_levels(self, elapsed, fall):
         # session meters give momentary peaks; follow a short envelope or the top segment flickers
