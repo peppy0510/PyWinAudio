@@ -177,17 +177,26 @@ def draw_faceplate(gc, x, y, width, height, face, ear, accent=None):
         fill_rect(gc, get_control_tone(accent), x, y + 6, 2, band - 12, 1)
 
 
-def draw_title(gc, left, y, title, subtitle, tone, limit):
+def note_clip(clips, text, shown, x, y, width, height):
+    # the canvas shows the whole of a cut text as the tooltip over where it was drawn
+    if clips is not None and shown != text:
+        clips.append((wx.Rect(int(x), int(y), int(math.ceil(width)), int(height)), text))
+
+
+def draw_title(gc, left, y, title, subtitle, tone, limit, clips=None):
     middle = y + HEADER_BAND / 2
     set_font(gc, TITLE_SIZE, RACK['text'], bold=True)
-    title = fit_text(gc, title.upper(), limit)
-    width = draw_text(gc, title, left, middle - 8, TITLE_SIZE, RACK['text'], bold=True,
+    shown = fit_text(gc, title.upper(), limit)
+    width = draw_text(gc, shown, left, middle - 8, TITLE_SIZE, RACK['text'], bold=True,
                       engraved=True)[0]
+    note_clip(clips, title.upper(), shown, left, middle - 8, width, 16)
     if subtitle:
         set_font(gc, 8, tone)
-        subtitle = fit_text(gc, subtitle, max(0, limit - width - 12))
-        if subtitle != '…':
-            draw_text(gc, subtitle, left + width + 12, middle - 6, 8, tone, engraved=True)
+        shown = fit_text(gc, subtitle, max(0, limit - width - 12))
+        if shown != '…':
+            sub_width = draw_text(gc, shown, left + width + 12, middle - 6, 8, tone,
+                                  engraved=True)[0]
+            note_clip(clips, subtitle, shown, left + width + 12, middle - 6, sub_width, 14)
     return width
 
 
@@ -283,9 +292,9 @@ def draw_chip_glyph(gc, name, cx, cy, colour):
         for y, start, end in ((-3.5, -5, 1), (0, -2, 5), (3.5, -5, 3)):
             gc.StrokeLine(cx + start, cy + y, cx + end, cy + y)
     elif name == 'pin':
-        stroke_points(gc, cx, cy, ((-2, -4.5), (2, -4.5), (2, -1), (4, 1.5), (-4, 1.5), (-2, -1)),
-                      close=True)
-        gc.StrokeLine(cx, cy + 1.5, cx, cy + 5)
+        stroke_points(gc, cx, cy, ((-2, -4.75), (2, -4.75), (2, -1.25), (4, 1.25), (-4, 1.25),
+                                   (-2, -1.25)), close=True)
+        gc.StrokeLine(cx, cy + 1.25, cx, cy + 4.75)
     elif name == 'bypass':
         # the signal jumps over the unit
         gc.DrawRectangle(cx - 2, cy + 0.5, 4, 4)
@@ -296,7 +305,9 @@ def draw_chip_glyph(gc, name, cx, cy, colour):
 
 def draw_icon_chip(gc, rect, glyph, lit, hovered=False):
     colour = draw_chip_face(gc, rect, lit, hovered)
-    draw_chip_glyph(gc, glyph, rect.x + rect.width / 2, rect.y + rect.height / 2, colour)
+    # the face is drawn half a pixel in; centre the glyph on what shows (measured)
+    draw_chip_glyph(gc, glyph, rect.x + rect.width / 2 + 0.5, rect.y + rect.height / 2 + 0.5,
+                    colour)
 
 
 def draw_led(gc, cx, cy, on, colour, radius=5.5, off=None):

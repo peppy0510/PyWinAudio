@@ -22,6 +22,7 @@ from rackui import draw_text
 from rackui import draw_title
 from rackui import fill_rect
 from rackui import fit_text
+from rackui import note_clip
 from rackui import get_control_tone
 from rackui import get_pen
 from rackui import mix
@@ -335,9 +336,10 @@ class MixerUnit:
         draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR, self.accent)
         self.draw_speaker(gc, rect.x + EAR + INSET + FOLD + 8 - 0.6, rect.y + FOLDED / 2, False, 0.62)
         left = rect.x + EAR + INSET + FOLD + 22
+        self.clipped = []
         draw_title(gc, left, rect.y, 'Mixer', self.get_subtitle(),
                    RACK['warn'] if self.mixer.error else RACK['dim'],
-                   rect.x + rect.width - EAR - INSET - left)
+                   rect.x + rect.width - EAR - INSET - left, self.clipped)
         self.fold.draw(gc, self.accent)
         if self.folded:
             return
@@ -362,8 +364,9 @@ class MixerUnit:
             self.draw_speaker(gc, x + ICON / 2, y + ICON / 2, column.master, 0.75)
         colour = RACK['text'] if channel.active else RACK['dim']
         set_font(gc, 7.5, colour, bold=True)
-        draw_text(gc, fit_text(gc, channel.name, rect.width - 14), rect.x + 7, y + ICON + 4,
-                  7.5, colour, bold=True)
+        shown = fit_text(gc, channel.name, rect.width - 14)
+        width = draw_text(gc, shown, rect.x + 7, y + ICON + 4, 7.5, colour, bold=True)[0]
+        note_clip(self.clipped, channel.name, shown, rect.x + 7, y + ICON + 4, width, 12)
         fill_rect(gc, RACK['line'], rect.x, rect.y + 41 + RULE_GAP + 1, rect.width, 1)
         foot = rect.y + rect.height - 8 - MUTE_SIZE - RULE_GAP - 1
         fill_rect(gc, RACK['line'], rect.x, foot, rect.width, 1)

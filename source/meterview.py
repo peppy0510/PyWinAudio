@@ -978,12 +978,18 @@ class MeterView(wx.Panel):
         dc.SetFont(font)
         dc.SetTextForeground(wx.Colour(RACK['warn'] if self.capture.error else RACK['dim']))
         limit = right - self.regions['chips_end'] - 16
+        self.status_clip = None
         if limit < 40:
             return
-        while text and self.get_extent(dc, font, text)[0] > limit:
-            text = text[:-2] + '…'
-        top = plate.y + (FOLDED - self.get_extent(dc, font, text or 'X')[1]) // 2
-        dc.DrawText(text, right - self.get_extent(dc, font, text)[0], top)
+        shown = text
+        while shown and self.get_extent(dc, font, shown)[0] > limit:
+            shown = shown[:-2] + '…'
+        width, height = self.get_extent(dc, font, shown or 'X')
+        top = plate.y + (FOLDED - height) // 2
+        dc.DrawText(shown, right - width, top)
+        # a cut name shows whole as the tooltip
+        if shown != text:
+            self.status_clip = (wx.Rect(right - width, top, width, height), text)
 
     def get_colour(self, db):
         if db >= -3:
@@ -1424,6 +1430,8 @@ class MeterView(wx.Panel):
         box = self.regions.get('boxes', {}).get('I')
         if box is not None and box.Contains(point):
             return 'integrated'
+        if self.status_clip is not None and self.status_clip[0].Contains(point):
+            return 'status'
         return None
 
     def on_down(self, event):
@@ -1451,6 +1459,7 @@ class MeterView(wx.Panel):
             self.on_wheel_rack(event)
 
     on_wheel_rack = None
+    status_clip = None
 
     def on_leave(self, event):
         self.set_hover(None)
@@ -1458,7 +1467,7 @@ class MeterView(wx.Panel):
         event.Skip()
 
     def set_hover_target(self, target):
-        if target in ('clip', 'integrated'):
+        if target in ('clip', 'integrated', 'status'):
             target = None
         if target == getattr(self, 'hover_target', None):
             return
@@ -1488,9 +1497,11 @@ class MeterView(wx.Panel):
         self.set_hover(point.x if inside else None)
         target = self.hit(point)
         self.set_hover_target(target)
-        self.SetCursor(wx.Cursor(wx.CURSOR_HAND if target else wx.CURSOR_ARROW))
+        self.SetCursor(wx.Cursor(wx.CURSOR_HAND if target and target != 'status' else
+                                 wx.CURSOR_ARROW))
         tip = {'clip': 'Click to reset',
                'integrated': 'Integrated loudness. Click to start over',
+               'status': self.status_clip[1] if self.status_clip else '',
                'fold': 'Unfold to analyze' if self.folded else 'Fold to stop analyzing',
                'part:level': 'Meters: Show or hide the level meter, vectorscope, spectrum bars, correlation and balance',
                'part:spectrum': 'Spectrum: Show or hide the spectrum',

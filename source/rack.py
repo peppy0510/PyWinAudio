@@ -110,7 +110,7 @@ class MasterUnit:
     def get_status(self):
         state = self.rack.state
         if state == 'missing':
-            return 'Equalizer APO is not installed', RACK['warn']
+            return 'Not installed', RACK['warn']
         if state == 'unlinked':
             return 'Not linked. Link takes over config.txt and keeps a copy', RACK['warn']
         if not self.rack.power:
@@ -129,7 +129,9 @@ class MasterUnit:
                               align='right', engraved=True)[0]
             right -= width + 16
         status, tone = self.get_status()
-        draw_title(gc, left, rect.y, 'PyWinAudio Rack', status, tone, max(0, right - left))
+        self.clipped = []
+        draw_title(gc, left, rect.y, 'Equalizer APO', status, tone, max(0, right - left),
+                   self.clipped)
         for control in self.get_controls():
             control.draw(gc, self.accent)
 
@@ -698,6 +700,13 @@ class RackView(Canvas):
                 return control
         return None
 
+    def get_clipped_text(self, point):
+        for block in self.get_blocks():
+            for rect, text in getattr(block, 'clipped', ()):
+                if rect.Contains(point):
+                    return text
+        return ''
+
     def set_hover(self, control, point):
         changed = False
         if control is not self.hovered:
@@ -711,7 +720,7 @@ class RackView(Canvas):
             changed = True
         cursor = control.cursor if control is not None else wx.CURSOR_ARROW
         self.SetCursor(wx.Cursor(cursor))
-        tip = control.tip if control is not None else ''
+        tip = control.tip if control is not None else self.get_clipped_text(point)
         if tip != (self.GetToolTipText() or ''):
             self.SetToolTip(tip or None)
         if changed:

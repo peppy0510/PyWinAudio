@@ -36,6 +36,7 @@ from rackui import draw_text
 from rackui import draw_title
 from rackui import fill_rect
 from rackui import fit_text
+from rackui import note_clip
 from rackui import get_font
 from rackui import get_pen
 from rackui import get_db_text
@@ -215,8 +216,9 @@ class Unit:
         rect = self.rect
         draw_faceplate(gc, rect.x, rect.y, rect.width, rect.height, self.face, EAR, self.accent)
         left = self.power.rect.x + 21  # one less: the power icon sits 1 px right
+        self.clipped = []
         draw_title(gc, left, rect.y, self.get_title(), self.get_subtitle(),
-                   self.get_subtitle_tone(), max(0, self.header_right - left))
+                   self.get_subtitle_tone(), max(0, self.header_right - left), self.clipped)
         if self.folded:
             for control in self.get_controls():
                 control.draw(gc, self.accent)
@@ -1377,11 +1379,12 @@ class AutoMasterUnit(VstUnit):
             tone = self.get_subtitle_tone()
             set_font(gc, 8, tone)
             limit = max(0, self.header_right - self.subtitle_left)
-            subtitle = fit_text(gc, subtitle, limit)
+            shown = fit_text(gc, subtitle, limit)
             # a lone ellipsis says nothing
-            if subtitle != '…':
-                draw_text(gc, subtitle, self.subtitle_left,
-                          self.rect.y + HEADER_BAND / 2 - 6, 8, tone, engraved=True)
+            if shown != '…':
+                top = self.rect.y + HEADER_BAND / 2 - 6
+                width = draw_text(gc, shown, self.subtitle_left, top, 8, tone, engraved=True)[0]
+                note_clip(self.clipped, subtitle, shown, self.subtitle_left, top, width, 14)
 
     def get_stage_switches(self, stage):
         names = [item[0] for item in self.data.get('params', ())]
