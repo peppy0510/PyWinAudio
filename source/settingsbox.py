@@ -34,12 +34,15 @@ from utilities import get_asset_path
 CONFIRM_DELAY = 4000
 THEMES = (('auto', 'Auto'), ('light', 'Light'), ('dark', 'Dark'))
 ACCENTS = (('blue', 'Blue'), ('red', 'Red'))
+UPDATE_NOTE = 'Look for a new release on GitHub'
+TRAY_NOTE = 'Also from the tray icon while the window is hidden'
+TRAY_NOTE_OFF = 'Needs the tray icon, under Window'
 
 
 class SettingsBox(ScrollArea):
 
     def __init__(self, parent, theme, settings, on_change, on_unlink, folds=None,
-                 on_fold=None):
+                 on_fold=None, on_check=None):
         super().__init__(parent, theme)
         self.on_unlink = on_unlink
         self.asking = None
@@ -72,6 +75,10 @@ class SettingsBox(ScrollArea):
         self.unlink.set_captions('Unlink?')
         self.shortcut = ButtonCard(board, theme, 'Start menu', 'Put a shortcut in the Start menu',
                                    'Create', self.on_shortcut)
+        self.check_updates = toggle('Check for updates', 'Once a day, a notice when one is out')
+        self.tray_notice = toggle('Tray notification', TRAY_NOTE)
+        self.check_now = ButtonCard(board, theme, 'Latest release', UPDATE_NOTE, 'Check now',
+                                    on_check)
 
         self.ontop.SetValue(settings.get('on_top', False))
         self.tray.SetValue(settings.get('tray_icon', True))
@@ -80,10 +87,14 @@ class SettingsBox(ScrollArea):
         self.theme_choice.SetValue(settings.get('theme', 'dark'))
         self.accent_choice.SetValue(settings.get('accent', 'blue'))
         self.wide.SetValue(settings.get('wide_layout', True))
+        self.check_updates.SetValue(settings.get('update_check', True))
+        self.tray_notice.SetValue(settings.get('update_tray', True))
+        self.update_tray_note()
 
         self.set_panels([
             Panel(board, theme, 'settings.window', 'Window',
-                  (self.ontop, self.tray, self.close_to_tray, self.autohide), self.folds, self.on_fold),
+                  (self.ontop, self.tray, self.close_to_tray, self.autohide), self.folds,
+                  self.on_fold),
             Panel(board, theme, 'settings.appearance', 'Appearance',
                   (self.theme_choice, self.accent_choice, self.wide), self.folds,
                   self.on_fold),
@@ -91,6 +102,9 @@ class SettingsBox(ScrollArea):
                   (self.status, self.devices, self.folder, self.unlink), self.folds,
                   self.on_fold),
             Panel(board, theme, 'settings.shortcut', 'Shortcut', (self.shortcut,), self.folds,
+                  self.on_fold),
+            Panel(board, theme, 'settings.updates', 'Updates',
+                  (self.check_updates, self.tray_notice, self.check_now), self.folds,
                   self.on_fold),
             Panel(board, theme, 'settings.about', 'About',
                   (AboutCard(board, theme, f'{APP_NAME} {APP_VERSION}',
@@ -108,7 +122,8 @@ class SettingsBox(ScrollArea):
             self.status.set_label('Equalizer APO', 'Not installed, or its config folder is missing')
             self.status.set_tone('warn')
         elif state == 'unlinked':
-            self.status.set_label('Equalizer APO', 'Installed, not linked yet. Link it from the rack')
+            self.status.set_label('Equalizer APO',
+                                  'Installed, not linked yet. Link it from the rack')
             self.status.set_tone('warn')
         else:
             self.status.set_label('Equalizer APO', f'Linked, the rack is in {eapo.OWN_FILE}')
@@ -116,6 +131,13 @@ class SettingsBox(ScrollArea):
         self.devices.set_enabled(eapo.get_device_selector() is not None)
         self.folder.set_enabled(folder is not None)
         self.unlink.set_enabled(state == 'linked')
+
+    def update_tray_note(self):
+        # the balloon pops up from the tray icon
+        note = TRAY_NOTE if self.tray.GetValue() else TRAY_NOTE_OFF
+        if note != self.tray_notice.description:
+            self.tray_notice.description = note
+            self.tray_notice.Refresh()
 
     def on_devices(self):
         # DeviceSelector writes HKLM, so it runs elevated

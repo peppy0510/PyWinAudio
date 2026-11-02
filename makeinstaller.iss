@@ -21,6 +21,8 @@ VersionInfoProductVersion="0.1.0"
 VersionInfoCompany="Taehong Kim"
 VersionInfoCopyright="Taehong Kim"
 ArchitecturesInstallIn64BitMode="x64compatible"
+CloseApplications=yes
+RestartApplications=no
 
 [Files]
 Source: ".dist\*"; DestDir: "{app}"; Flags: recursesubdirs
@@ -30,6 +32,7 @@ Source: "plugin\.build\PyWinAudioAutoMaster.dll"; DestDir: "{commonappdata}\PyWi
 [Run]
 ; the engine runs as LOCAL SERVICE; as in plugin\install.ps1
 Filename: "{win}\System32\icacls.exe"; Parameters: """{commonappdata}\PyWinAudio\vstplugins"" /grant *S-1-5-19:(OI)(CI)RX"; Flags: runhidden
+Filename: "{app}\PyWinAudio.exe"; Description: "Launch PyWinAudio"; Flags: nowait postinstall skipifsilent
 
 [Icons]
 Name: "{group}\PyWinAudio"; Filename: "{app}\PyWinAudio.exe"

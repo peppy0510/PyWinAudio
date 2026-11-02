@@ -39,7 +39,20 @@ def launch():
     launch_mainapp()
 
 
+def wait_for_previous():
+    # an update restarts the app; the new copy waits for the old one to go
+    if '--after' not in sys.argv:
+        return
+    import psutil
+    try:
+        pid = int(sys.argv[sys.argv.index('--after') + 1])
+        psutil.Process(pid).wait(10)
+    except (ValueError, IndexError, psutil.Error):
+        pass
+
+
 def main():
+    wait_for_previous()
     if has_running_instance():
         print('PyWinAudio is already running.')
         show_running_window('PyWinAudio')

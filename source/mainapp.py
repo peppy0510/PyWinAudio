@@ -8,8 +8,11 @@ email: peppy0510@hotmail.com
 
 
 import os
+import subprocess
+import time
 import winreg
 import wx
+import wx.adv
 
 import eapo
 
@@ -23,6 +26,9 @@ from settingsbox import SettingsBox
 from sidemenu import SideMenu
 from titlebar import TitleBar
 from tray import TrayIcon
+from updatebox import UpdateBox
+from updater import Updater
+from updater import restart_source
 from utilities import APP_NAME
 from utilities import THEMES
 from utilities import apply_accent
@@ -112,17 +118,24 @@ class MainFrame(wx.Frame):
         self.rackpage.Bind(wx.EVT_SIZE, lambda event: (self.place_rackpage(), event.Skip()))
         self.settings_folds = set(settings.get('settings_folded', []))
         self.settingsbox = SettingsBox(self.book, theme, settings, self.on_settings,
-                                       self.on_unlink, self.settings_folds, self.store_settings)
+                                       self.on_unlink, self.settings_folds, self.store_settings,
+                                       self.on_check_updates)
         for page in (self.rackpage, self.settingsbox):
             self.book.AddPage(page, '')
 
         self.titlebar = TitleBar(self, theme, self.on_menu, self.toggle_maximize)
+        # before the menu, which opens over it
+        self.updatebox = UpdateBox(self, theme, self.on_update_action)
+        self.updater = Updater(settings, self.on_update_checked)
+        self.release = None
         self.sidemenu = SideMenu(self, theme, MENU_ITEMS, self.on_select)
         # the drawer floats over the page, so the page must clip siblings
         apply_clip_siblings(self.book)
+        apply_clip_siblings(self.updatebox)
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.titlebar, 0, wx.EXPAND)
+        sizer.Add(self.updatebox, 0, wx.EXPAND)
         sizer.Add(self.book, 1, wx.EXPAND)
         self.SetSizer(sizer)
 
@@ -243,6 +256,7 @@ class MainFrame(wx.Frame):
         self.book.SetBackgroundColour(wx.Colour(theme['bg']))
         self.titlebar.set_theme(theme)
         self.sidemenu.set_theme(theme)
+        self.updatebox.set_theme(theme)
         self.settingsbox.apply_theme(theme)
         apply_titlebar_theme(self, theme)
         apply_tooltip_theme(self, theme)
@@ -337,9 +351,11 @@ class MainFrame(wx.Frame):
             self.apply_theme()
         if self.settingsbox.tray.GetValue() and self.tray is None:
             self.tray = TrayIcon(self)
+            self.tray.Bind(wx.adv.EVT_TASKBAR_BALLOON_CLICK, lambda event: self.show_window())
             self.update_tray()
         elif not self.settingsbox.tray.GetValue() and self.tray is not None:
             self.remove_tray()
+        self.settingsbox.update_tray_note()
         self.store_settings()
 
     def remove_tray(self):
@@ -383,6 +399,95 @@ class MainFrame(wx.Frame):
         else:
             self.tray.set_tip('Rack on' if self.rack.power else 'Rack off, sound passes through')
 
+    def on_check_updates(self):
+        self.settingsbox.check_now.set_tone('plain')
+        self.settingsbox.check_now.set_description('Checking…')
+        self.updater.check(forced=True)
+
+    def get_checked_time(self):
+        return time.strftime('%H:%M', time.localtime(self.updater.checked_at))
+
+    def on_update_checked(self, release, result, forced):
+        # a queued call can arrive after close
+        if not self:
+            return
+        card = self.settingsbox.check_now
+        card.set_tone('warn' if result == 'error' else 'plain')
+        if result == 'error':
+            card.set_description('Could not reach GitHub')
+            return
+        self.store_settings()
+        if result == 'found':
+            card.set_description(f'{release["version"]} is available')
+            self.show_update(release)
+        elif result == 'skipped':
+            card.set_description(f'{self.updater.skipped} skipped, '
+                                 f'checked at {self.get_checked_time()}')
+        else:
+            card.set_description(f'Up to date, checked at {self.get_checked_time()}')
+
+    def show_update(self, release):
+        # a notice already updating stays as it is
+        if self.updatebox.IsShown() and self.updatebox.state == 'busy':
+            return
+        self.release = release
+        self.updatebox.show_release(release)
+        if not self.updatebox.IsShown():
+            self.updatebox.Show()
+            self.Layout()
+        if (self.tray is not None and self.settingsbox.tray_notice.GetValue()
+                and not self.tray.is_window_shown()):
+            self.tray.ShowBalloon(f'{APP_NAME} {release["version"]}',
+                                  'A new version is available', 10000, wx.ICON_INFORMATION)
+
+    def hide_update(self):
+        self.updatebox.Hide()
+        self.Layout()
+
+    def on_update_action(self, key):
+        release = self.release
+        if key == 'skip':
+            self.updater.skipped = release['version']
+            self.store_settings()
+            self.settingsbox.check_now.set_description(f'{release["version"]} skipped')
+            self.hide_update()
+        elif key == 'later':
+            self.hide_update()
+        elif key == 'cancel':
+            self.updater.cancel()
+        elif release['kind'] == 'page':
+            # explorer hands the link to the shell, as the About card does
+            subprocess.Popen(['explorer', release['page']])
+            self.hide_update()
+        else:
+            if release['kind'] == 'installer':
+                self.updatebox.set_busy('Downloading 0%', 0.0)
+            else:
+                self.updatebox.set_busy('Updating…')
+            self.updater.update(release, self.on_update_progress, self.on_update_done)
+
+    def on_update_progress(self, ratio):
+        if not self or self.updatebox.state != 'busy':
+            return
+        message = f'Downloading {int(ratio * 100)}%'
+        if message != self.updatebox.message:
+            self.updatebox.set_busy(message, ratio)
+
+    def on_update_done(self, error):
+        if not self:
+            return
+        if error is not None:
+            self.updatebox.set_failed(error)
+            return
+        if self.release['kind'] == 'git':
+            try:
+                restart_source()
+            except OSError:
+                self.updatebox.set_failed('Updated, start the app again to use it')
+                return
+        # the installer replaces the app's files once it is gone
+        self.quit()
+
     def on_size(self, event):
         self.sidemenu.place(TitleBar.HEIGHT)
         event.Skip()
@@ -407,6 +512,7 @@ class MainFrame(wx.Frame):
                    self.sidemenu.is_open() or
                    self.GetScreenRect().Contains(wx.GetMousePosition()))
         self.titlebar.set_visible(visible)
+        self.updater.tick(self.settingsbox.check_updates.GetValue())
 
     def store_settings(self):
         if not self.ready:
@@ -426,6 +532,10 @@ class MainFrame(wx.Frame):
             'close_to_tray': self.settingsbox.close_to_tray.GetValue(),
             'auto_hide_menu': self.settingsbox.autohide.GetValue(),
             'wide_layout': self.settingsbox.wide.GetValue(),
+            'update_check': self.settingsbox.check_updates.GetValue(),
+            'update_tray': self.settingsbox.tray_notice.GetValue(),
+            'update_checked_at': self.updater.checked_at,
+            'update_skipped': self.updater.skipped,
             'rect': self.stored_rect,
             'power': self.rack.power,
             'chain': self.rack.get_chain(),
@@ -444,6 +554,7 @@ class MainFrame(wx.Frame):
             return
         self.timer.Stop()
         self.sizing.Stop()
+        self.updater.cancel()
         if self.saver is not None and self.saver.IsRunning():
             self.saver.Stop()
         if self.writer is not None and self.writer.IsRunning():
