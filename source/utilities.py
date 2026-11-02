@@ -121,7 +121,7 @@ CONTROL_ACCENT = {'rack': None}
 
 
 def apply_accent(name):
-    for theme_name, (accent, on_accent) in ACCENTS.get(name, ACCENTS['blue']).items():
+    for theme_name, (accent, on_accent) in ACCENTS.get(name, ACCENTS['red']).items():
         THEMES[theme_name]['control_accent'] = accent
         THEMES[theme_name]['on_control_accent'] = on_accent
     CONTROL_ACCENT['rack'] = ACCENTS['red']['dark'][0] if name == 'red' else None

@@ -88,7 +88,7 @@ class MainFrame(wx.Frame):
         apply_no_caption(self)
         self.SetMinSize(wx.Size(*MIN_SIZE))
 
-        self.accent_name = settings.get('accent', 'blue')
+        self.accent_name = settings.get('accent', 'red')
         apply_accent(self.accent_name)
         self.theme_name = self.resolve_theme(settings.get('theme', 'dark'))
         theme = THEMES[self.theme_name]

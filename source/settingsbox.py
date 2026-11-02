@@ -85,7 +85,7 @@ class SettingsBox(ScrollArea):
         self.close_to_tray.SetValue(settings.get('close_to_tray', False))
         self.autohide.SetValue(settings.get('auto_hide_menu', False))
         self.theme_choice.SetValue(settings.get('theme', 'dark'))
-        self.accent_choice.SetValue(settings.get('accent', 'blue'))
+        self.accent_choice.SetValue(settings.get('accent', 'red'))
         self.wide.SetValue(settings.get('wide_layout', True))
         self.check_updates.SetValue(settings.get('update_check', True))
         self.tray_notice.SetValue(settings.get('update_tray', True))
