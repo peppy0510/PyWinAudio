@@ -11,18 +11,19 @@ import ctypes
 import makeshortcut
 import os
 import subprocess
+import sys
 import wx
 
 import eapo
 
 from controls import AboutCard
+from controls import ActionCard
 from controls import ButtonCard
 from controls import ChoiceCard
 from controls import NoticeCard
 from controls import Panel
 from controls import ScrollArea
 from controls import SettingCard
-from shortcut import ShortCut
 from utilities import APP_AUTHOR
 from utilities import APP_EMAIL
 from utilities import APP_HOME
@@ -34,6 +35,8 @@ from utilities import get_asset_path
 CONFIRM_DELAY = 4000
 THEMES = (('auto', 'Auto'), ('light', 'Light'), ('dark', 'Dark'))
 ACCENTS = (('blue', 'Blue'), ('red', 'Red'))
+SHORTCUT_OFF = 'Put a shortcut in the Start menu'
+SHORTCUT_ON = 'A shortcut is in the Start menu'
 UPDATE_NOTE = 'Look for a new release on GitHub'
 TRAY_NOTE = 'Also from the tray icon while the window is hidden'
 TRAY_NOTE_OFF = 'Needs the tray icon, under Window'
@@ -73,8 +76,13 @@ class SettingsBox(ScrollArea):
         self.unlink = ButtonCard(board, theme, 'Unlink', 'Put the previous config.txt back',
                                  'Unlink', self.on_unlink_click)
         self.unlink.set_captions('Unlink?')
-        self.shortcut = ButtonCard(board, theme, 'Start menu', 'Put a shortcut in the Start menu',
-                                   'Create', self.on_shortcut)
+        # a source run only: an installed exe has the installer's Start menu entry
+        self.shortcut = None
+        if not getattr(sys, 'frozen', False):
+            self.shortcut = ActionCard(board, theme, 'Start menu', SHORTCUT_OFF, 'Create',
+                                       self.on_shortcut)
+            self.shortcut.set_captions('Remove')
+            self.update_shortcut()
         self.check_updates = toggle('Check for updates', 'Once a day, a notice when one is out')
         self.tray_notice = toggle('Tray notification', TRAY_NOTE)
         self.check_now = ButtonCard(board, theme, 'Latest release', UPDATE_NOTE, 'Check now',
@@ -101,8 +109,8 @@ class SettingsBox(ScrollArea):
             Panel(board, theme, 'settings.eapo', 'Equalizer APO',
                   (self.status, self.devices, self.folder, self.unlink), self.folds,
                   self.on_fold),
-            Panel(board, theme, 'settings.shortcut', 'Shortcut', (self.shortcut,), self.folds,
-                  self.on_fold),
+            *([Panel(board, theme, 'settings.shortcut', 'Shortcut', (self.shortcut,), self.folds,
+                     self.on_fold)] if self.shortcut else []),
             Panel(board, theme, 'settings.updates', 'Updates',
                   (self.check_updates, self.tray_notice, self.check_now), self.folds,
                   self.on_fold),
@@ -172,15 +180,25 @@ class SettingsBox(ScrollArea):
         self.unlink.set_caption('Unlink')
         self.unlink.set_tone('plain')
 
+    def update_shortcut(self, note=None):
+        present = makeshortcut.has_start_menu()
+        self.shortcut.set_caption('Remove' if present else 'Create')
+        self.shortcut.set_description(note or (SHORTCUT_ON if present else SHORTCUT_OFF))
+
     def on_shortcut(self):
         try:
-            makeshortcut.create(ShortCut.get_user_programs_path(APP_NAME))
+            if makeshortcut.has_start_menu():
+                makeshortcut.remove_start_menu()
+                note = 'Shortcut removed'
+            else:
+                makeshortcut.create(makeshortcut.get_start_menu_paths()[0])
+                note = 'Shortcut created'
         except Exception:
-            self.shortcut.set_label('Start menu', 'Could not create the shortcut')
+            self.shortcut.set_description('Could not change the shortcut')
             self.shortcut.set_tone('warn')
             return
-        self.shortcut.set_label('Start menu', 'Shortcut created')
-        self.shortcut.set_tone('done')
+        self.update_shortcut(note)
+        self.shortcut.set_tone('plain')
 
     def on_home(self):
         # explorer hands the link to the shell, so the browser does not inherit elevation
