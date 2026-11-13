@@ -90,6 +90,7 @@ def fetch_release():
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             data = json.load(response)
     except urllib.error.HTTPError as error:
+        # a private repository answers a request without a token the same way
         if error.code == 404:
             return None
         raise
@@ -270,6 +271,7 @@ class Updater:
 
     def __init__(self, settings, on_checked):
         self.on_checked = on_checked
+        self.enabled = settings.get('update_check', True)
         self.checked_at = settings.get('update_checked_at', 0)
         self.skipped = settings.get('update_skipped', '')
         self.started = time.monotonic()
@@ -277,7 +279,10 @@ class Updater:
         self.busy = False
         self.cancelled = False
 
+    # asked on whatever beat the app keeps while its window is hidden, a thread's too
     def is_due(self):
+        if not self.enabled or self.busy:
+            return False
         now = time.monotonic()
         if now - self.started < START_DELAY:
             return False
@@ -286,8 +291,8 @@ class Updater:
         # a clock set back counts as due
         return not 0 <= time.time() - self.checked_at < CHECK_SECONDS
 
-    def tick(self, enabled):
-        if enabled and not self.busy and self.is_due():
+    def tick(self):
+        if self.is_due():
             self.check()
 
     def check(self, forced=False):

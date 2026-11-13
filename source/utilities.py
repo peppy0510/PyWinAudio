@@ -530,9 +530,15 @@ def get_ink_span(font, text, colour='#ffffff', back='#000000'):
     return SPANS[key]
 
 
+# round() sends .5 to the even side, so a centred text moved 0 then 2 px as the window
+# grew a pixel at a time and wobbled inside its button
+def round_half_up(value):
+    return int(math.floor(value + 0.5))
+
+
 def get_text_top(font, top, height):
     ink_top, ink_bottom = get_ink(font)
-    return int(round(top + (height - (ink_bottom - ink_top + 1)) / 2.0 - ink_top))
+    return round_half_up(top + (height - (ink_bottom - ink_top + 1)) / 2.0 - ink_top)
 
 
 def draw_text_in(gc, text, rect, font, colour, align='center', back=None):
@@ -543,7 +549,7 @@ def draw_text_in(gc, text, rect, font, colour, align='center', back=None):
     else:
         ink_left, ink_right = get_ink_span(font, text, colour, back)
     if align == 'center':
-        x = int(round(rect.x + (rect.width - (ink_right - ink_left + 1)) / 2.0 - ink_left))
+        x = round_half_up(rect.x + (rect.width - (ink_right - ink_left + 1)) / 2.0 - ink_left)
     elif align == 'right':
         x = rect.x + rect.width - 1 - ink_right
     else:

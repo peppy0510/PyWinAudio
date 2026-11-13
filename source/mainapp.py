@@ -333,6 +333,7 @@ class MainFrame(wx.Frame):
         return choice if choice in THEMES else 'dark'
 
     def on_settings(self):
+        self.updater.enabled = self.settingsbox.check_updates.GetValue()
         style = self.GetWindowStyle()
         if self.settingsbox.ontop.GetValue():
             self.SetWindowStyle(style | wx.STAY_ON_TOP)
@@ -512,7 +513,7 @@ class MainFrame(wx.Frame):
                    self.sidemenu.is_open() or
                    self.GetScreenRect().Contains(wx.GetMousePosition()))
         self.titlebar.set_visible(visible)
-        self.updater.tick(self.settingsbox.check_updates.GetValue())
+        self.updater.tick()
 
     def store_settings(self):
         if not self.ready:
